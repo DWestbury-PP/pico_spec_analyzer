@@ -324,19 +324,3 @@ docker-compose run --rm test
 - [ARM CMSIS-DSP Library](https://github.com/ARM-software/CMSIS-DSP)
 - [PIO Assembly Guide](https://datasheets.raspberrypi.com/pico/raspberry-pi-pico-c-sdk.pdf)
 
-## 📝 License
-
-TBD - To be determined by project owner
-
-## 👤 Author
-
-David Westbury
-
----
-
-**Status**: 🚧 In Development
-
-**Hardware**: Pico W + ILI9341 Display + MAX4466 Mic + 3.5mm Jack
-
-**Framework**: C/C++ with Pico SDK + PIO + CMSIS-DSP
-
