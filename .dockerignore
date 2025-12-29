@@ -1,0 +1,51 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.elf
+*.bin
+*.hex
+*.uf2
+*.map
+*.lst
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitmodules
+
+# Documentation (already in container or not needed for build)
+*.md
+*.pdf
+*.jpg
+*.jpeg
+*.png
+
+# Docker files (avoid recursive copying)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Logs and temporary files
+*.log
+tmp/
+temp/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+

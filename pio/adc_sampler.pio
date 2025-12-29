@@ -1,0 +1,80 @@
+;
+; adc_sampler.pio
+;
+; PIO program for precise ADC sampling at fixed intervals
+; This provides accurate timing for audio sampling, reducing jitter
+; compared to interrupt-based sampling.
+;
+; Features:
+; - Configurable sample rate via clock divider
+; - Triggers ADC reads at precise intervals
+; - Pushes samples to FIFO for CPU consumption
+; - Minimal CPU overhead
+;
+
+.program adc_sampler
+
+; Configuration:
+; - Autopush enabled with threshold of 1 (push every sample)
+; - Out shift direction: right, 32 bits
+; - Clock divider set to achieve desired sample rate
+
+.wrap_target
+    ; Wait for the configured time (controlled by clock divider)
+    ; This provides precise timing between samples
+    
+    ; Trigger ADC conversion
+    ; In practice, we'll use the ADC's built-in conversion trigger
+    ; or coordinate with the ADC via GPIO pins if needed
+    
+    ; Read ADC result (ADC peripheral must be configured to write to GPIO)
+    ; The exact implementation depends on how we interface PIO with ADC
+    ; This is a placeholder for the sampling logic
+    
+    ; For now, this is a simplified version
+    ; We'll refine this based on the actual ADC-PIO interface method
+    
+    mov isr, pins           ; Read pins (if ADC output is mapped to pins)
+    push noblock            ; Push sample to FIFO (non-blocking)
+    
+.wrap
+
+% c-sdk {
+// Helper function to initialize the PIO program
+static inline void adc_sampler_program_init(PIO pio, uint sm, uint offset, float sample_rate) {
+    // Get default config
+    pio_sm_config c = adc_sampler_program_get_default_config(offset);
+    
+    // Configure clock divider for desired sample rate
+    // System clock is 125 MHz by default
+    // Clock divider = (system_clock / sample_rate) / instructions_per_sample
+    float div = (float)clock_get_hz(clk_sys) / sample_rate;
+    sm_config_set_clkdiv(&c, div);
+    
+    // Configure autopush: push after 32 bits (one full ADC sample)
+    sm_config_set_in_shift(&c, false, true, 32);  // shift_right=false, autopush=true, push_threshold=32
+    sm_config_set_out_shift(&c, true, false, 32); // shift_right=true, autopull=false
+    
+    // TODO: Configure pins for ADC interface
+    // This depends on how we connect PIO to ADC
+    // May use GPIO pins or internal routing
+    
+    // Initialize state machine
+    pio_sm_init(pio, sm, offset, &c);
+    
+    // Enable state machine
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+// Helper function to read a sample from the PIO FIFO
+static inline bool adc_sampler_get_sample(PIO pio, uint sm, uint16_t *sample) {
+    if (pio_sm_is_rx_fifo_empty(pio, sm)) {
+        return false;  // No sample available
+    }
+    
+    uint32_t data = pio_sm_get(pio, sm);
+    *sample = (uint16_t)(data & 0x0FFF);  // 12-bit ADC value
+    return true;
+}
+%}
+

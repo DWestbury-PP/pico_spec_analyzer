@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # Main development service for building and compiling
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        USERNAME: pico
+        USER_UID: 1000
+        USER_GID: 1000
+    image: pico-spec-analyzer:latest
+    container_name: pico-spec-dev
+    volumes:
+      # Mount the entire project directory
+      - .:/workspace
+    working_dir: /workspace
+    environment:
+      - PICO_SDK_PATH=/opt/pico-sdk
+      - PICO_BOARD=pico_w
+    stdin_open: true
+    tty: true
+    command: bash
+
+  # Quick build service (non-interactive)
+  build:
+    image: pico-spec-analyzer:latest
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    environment:
+      - PICO_SDK_PATH=/opt/pico-sdk
+      - PICO_BOARD=pico_w
+    command: >
+      bash -c "
+      echo '🔨 Building Pico Spectrum Analyzer...';
+      mkdir -p build && cd build;
+      cmake .. -DPICO_BOARD=pico_w;
+      make -j\$(nproc);
+      echo '';
+      echo '✅ Build complete!';
+      echo '📦 Output: build/pico_spec_analyzer.uf2';
+      echo '📤 Flash: Copy build/pico_spec_analyzer.uf2 to PICO drive';
+      ls -lh *.uf2 2>/dev/null || echo 'No .uf2 files found yet'
+      "
+
+  # Clean build service
+  clean:
+    image: pico-spec-analyzer:latest
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    command: >
+      bash -c "
+      echo '🧹 Cleaning build artifacts...';
+      rm -rf build/*;
+      echo '✅ Clean complete!';
+      "
+
+  # Test service for running unit tests
+  test:
+    image: pico-spec-analyzer:latest
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    environment:
+      - PICO_SDK_PATH=/opt/pico-sdk
+    command: >
+      bash -c "
+      echo '🧪 Running tests...';
+      mkdir -p build && cd build;
+      cmake .. -DBUILD_TESTS=ON;
+      make -j\$(nproc);
+      ctest --output-on-failure;
+      "
+
+# Note: Build directory is mounted directly from host for easy access to .uf2 files
+# This allows flashing without copying files from Docker volumes
+
