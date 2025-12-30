@@ -82,14 +82,15 @@ Pico W GPIO Assignments:
 │   ├── GP18 - SCK (Clock)
 │   ├── GP19 - MOSI (Data)
 │   ├── GP20 - DC (Data/Command)
-│   └── GP21 - RST (Reset)
+│   ├── GP21 - RST (Reset)
+│   └── GP22 - BL (Backlight, optional PWM)
 │
 ├── Touch Controller (SPI1 or shared SPI0)
 │   ├── GP12 - MISO
 │   ├── GP13 - CS
 │   ├── GP14 - SCK
 │   ├── GP15 - MOSI
-│   └── GP22 - IRQ (Interrupt)
+│   └── GP23 - IRQ (Interrupt)
 │
 ├── Audio Input
 │   ├── GP26 (ADC0) - Microphone input
@@ -97,9 +98,51 @@ Pico W GPIO Assignments:
 │   └── GP10 - Input select (High=Mic, Low=Jack)
 │
 └── Status/Debug
-    ├── LED (GPIO 25/WL_GPIO0) - Activity indicator
+    ├── GP15 - External LED for testing
     └── GP0/GP1 - UART TX/RX for debug
 ```
+
+### Detailed Wiring: ILI9341 Display
+
+| Display Pin | Function | Pico W GPIO | Physical Pin | Notes |
+|-------------|----------|-------------|--------------|-------|
+| VCC | Power | 3.3V | Pin 36 | Or 5V if module has regulator |
+| GND | Ground | GND | Pin 38 | Any GND pin works |
+| CS | Chip Select | GP17 | Pin 22 | SPI0 CS |
+| RESET | Reset | GP21 | Pin 27 | Hardware reset |
+| DC/RS | Data/Command | GP20 | Pin 26 | Register select |
+| SDI/MOSI | Data Out | GP19 | Pin 25 | SPI0 TX |
+| SCK | Clock | GP18 | Pin 24 | SPI0 SCK |
+| LED/BL | Backlight | 3.3V or GP22 | Pin 36 or 29 | Can use PWM on GP22 |
+| SDO/MISO | Data In | GP16 | Pin 21 | Optional, not used |
+
+**Important Notes:**
+- Most ILI9341 modules operate at 3.3V logic levels
+- Some modules have onboard regulators and can accept 5V on VCC
+- Backlight (LED pin) can be connected directly to 3.3V for always-on
+- Or connect to GP22 for software control with PWM dimming
+- MISO is optional as ILI9341 is write-only for most operations
+
+### Detailed Wiring: MAX4466 Microphone
+
+| Microphone Pin | Function | Pico W GPIO | Physical Pin | Notes |
+|----------------|----------|-------------|--------------|-------|
+| VCC | Power | 3.3V | Pin 36 | Powers the amplifier |
+| GND | Ground | GND | Pin 38 | Any GND pin works |
+| OUT | Audio Output | GP26 (ADC0) | Pin 31 | Analog audio signal |
+
+**Important Notes:**
+- MAX4466 outputs analog audio signal centered at VCC/2 (~1.65V)
+- Built-in adjustable gain via onboard potentiometer
+- Output range: 0.6V to 2.0V typically
+- Adjust gain pot clockwise for higher sensitivity
+- Start with low gain to avoid clipping, increase as needed
+
+**Wiring Tips:**
+- Keep wires short to minimize noise pickup
+- Route audio signal away from SPI and power lines if possible
+- The MAX4466 is quite sensitive - start testing with low gain
+- You can add a 0.1µF capacitor between VCC and GND for stability (optional)
 
 ## 🛠️ Development Setup
 

@@ -58,10 +58,11 @@ static app_state_t g_app_state = {
  * @brief Initialize GPIO pins for status LED and audio input selection
  */
 static void init_gpio(void) {
-    // Initialize LED
+    // Initialize LED on GPIO pin (works for both Pico and Pico W)
     gpio_init(LED_PIN);
     gpio_set_dir(LED_PIN, GPIO_OUT);
     gpio_put(LED_PIN, 1);  // Turn on during init
+    DEBUG_PRINTF("LED initialized on GPIO %d\n", LED_PIN);
     
     // Initialize audio input selector
     gpio_init(AUDIO_PIN_SELECT);
@@ -131,12 +132,14 @@ static void hardware_init(void) {
     init_touch_spi();
     
     // Blink LED to indicate successful init
+    DEBUG_PRINTF("Blinking LED 3 times...\n");
     for (int i = 0; i < 3; i++) {
         gpio_put(LED_PIN, 0);
-        sleep_ms(100);
+        sleep_ms(200);
         gpio_put(LED_PIN, 1);
-        sleep_ms(100);
+        sleep_ms(200);
     }
+    DEBUG_PRINTF("Init complete!\n");
     
     DEBUG_PRINTF("Hardware initialization complete\n");
 }
@@ -184,8 +187,10 @@ static void core0_audio_processing(void) {
         
         // Placeholder: blink LED at 1Hz
         static uint32_t led_counter = 0;
+        static bool led_state = false;
         if (++led_counter >= 100) {
-            gpio_put(LED_PIN, !gpio_get(LED_PIN));
+            led_state = !led_state;
+            gpio_put(LED_PIN, led_state);
             led_counter = 0;
         }
         

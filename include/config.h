@@ -47,14 +47,11 @@
 #define AUDIO_PIN_SELECT    10  // Input selector (High=Mic, Low=Jack)
 
 // --- Status LED ---
-// Pico W has LED on wireless chip, Pico has it on GPIO 25
-// For Pico W, we'll use a regular GPIO instead for simplicity
-// (using CYW43 LED requires additional driver complexity)
-#ifdef PICO_DEFAULT_LED_PIN
-    #define LED_PIN         PICO_DEFAULT_LED_PIN
-#else
-    #define LED_PIN         25  // Standard Pico LED (Pico W: use GPIO if not wireless)
-#endif
+// For simplicity, we'll use GPIO 15 for LED on both Pico and Pico W
+// This avoids the complexity of CYW43 wireless chip LED on Pico W
+// You can connect an external LED to GP15 with a resistor (220-330 ohm)
+// Or use any other free GPIO pin
+#define LED_PIN         15  // External LED (safe for both Pico and Pico W)
 
 // --- Debug UART ---
 #define UART_ID             uart0

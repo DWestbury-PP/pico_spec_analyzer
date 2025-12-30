@@ -33,14 +33,38 @@ endif()
 # ============================================================================
 
 set(SOURCES
-    src/main.c
+    # Real spectrum analyzer (active)
+    src/spectrum_analyzer.c
+    
+    # Display driver and themes
+    src/display/ili9341.c
+    src/display/themes/bars.c
+    
+    # Audio processing
+    src/audio/adc_sampler.c
+    src/audio/fft_processor.c
+    
+    # Spectrum visualization test (comment out)
+    # src/spectrum_viz_test.c
+    
+    # Mock audio generator (comment out)
+    # src/utils/mock_audio.c
+    
+    # Display test (comment out)
+    # src/display_test.c
+    
+    # Main application (comment out during testing)
+    # src/main.c
+    
+    # Simple test for hardware validation (uncomment to test)
+    # src/main_simple_test.c
+    
     # Audio processing modules (to be added)
     # src/audio/adc_sampler.c
     # src/audio/fft_processor.c
     # src/audio/audio_input.c
     
     # Display modules (to be added)
-    # src/display/ili9341.c
     # src/display/spi_dma.c
     # src/display/themes/bars.c
     # src/display/themes/waterfall.c
@@ -86,13 +110,13 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 # Link Pico SDK libraries
 target_link_libraries(${PROJECT_NAME}
     pico_stdlib              # Standard library (stdio, time, etc.)
+    hardware_gpio            # GPIO control
     pico_multicore           # Dual-core support
     hardware_adc             # ADC for audio input
     hardware_spi             # SPI for display and touch
     hardware_dma             # DMA for efficient transfers
     hardware_pio             # PIO for custom peripherals
     hardware_pwm             # PWM (if needed for backlight)
-    hardware_gpio            # GPIO control
     pico_binary_info         # Binary metadata for picotool
 )
 
