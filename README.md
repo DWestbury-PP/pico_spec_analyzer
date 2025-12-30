@@ -1,4 +1,7 @@
 # Raspberry Pi Pico Spectrum Analyzer
+![Fully Wired Spectrum Analyzer](./asset_images/fully_wired.jpeg)
+
+
 
 A real-time audio spectrum analyzer for the Raspberry Pi Pico W, featuring FFT-based frequency analysis with multiple visualization themes on an SPI TFT display.
 
