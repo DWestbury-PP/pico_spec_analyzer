@@ -24,17 +24,18 @@ This project creates a minimalist yet powerful spectrum analyzer that processes 
   - ✅ Tested with full audible range (20Hz - 20kHz)
 
 - **Visualization Themes**
-  - ✅ **Classic Bars** - Vertical bars with color gradients and peak hold
-  - ✅ **Waterfall** - Scrolling spectrogram (coded, integration pending)
-  - 🔄 Radial/circular spectrum (in development)
-  - 🔄 VU meter style (planned)
-  - 🔄 Mirror mode (planned)
+  - ✅ **Classic Bars** - Vertical bars with color gradients and peak hold (working!)
+  - ✅ **Waterfall** - Scrolling spectrogram (fully integrated!)
+  - ✅ **Radial** - Circular spectrum visualization (fully coded!)
+  - ✅ **Mirror** - Symmetric mirrored bars (fully coded!)
+  - 🔄 VU meter style (future enhancement)
   
 - **Touch Control Interface**
-  - ✅ XPT2046 resistive touch controller driver
-  - ✅ Gesture detection (swipe, tap, long press)
-  - 🔄 Theme switching integration (next step)
-  - 🔄 Settings menu (planned)
+  - ✅ XPT2046 resistive touch controller driver (fully coded!)
+  - ✅ Gesture detection (swipe, tap, long press) (fully coded!)
+  - ✅ Theme manager with smooth switching (fully integrated!)
+  - ✅ On-screen theme name overlay (fully coded!)
+  - 🔄 Settings menu (future enhancement)
 
 - **PIO-Accelerated Audio Sampling**
   - ✅ Programmable I/O for precise ADC timing
@@ -254,93 +255,102 @@ make -j4
 ```
 pico_spec_analyzer/
 ├── src/
-│   ├── main.c                 # Entry point, core initialization
+│   ├── spectrum_analyzer.c    # ✅ Main application with touch integration
 │   ├── audio/
-│   │   ├── adc_sampler.c      # PIO-based ADC sampling
-│   │   ├── fft_processor.c    # FFT computation & band extraction
-│   │   └── audio_input.c      # Input switching logic
+│   │   ├── adc_sampler.c      # ✅ PIO-based ADC sampling
+│   │   └── fft_processor.c    # ✅ FFT computation & band extraction
 │   ├── display/
-│   │   ├── ili9341.c          # Display driver
-│   │   ├── spi_dma.c          # SPI with DMA transfers
+│   │   ├── ili9341.c          # ✅ Display driver (SPI @ 32MHz)
+│   │   ├── theme_manager.c    # ✅ Theme management & switching
 │   │   └── themes/
-│   │       ├── bars.c         # Bar graph visualization
-│   │       ├── waterfall.c    # Waterfall spectrogram
-│   │       ├── radial.c       # Circular spectrum
-│   │       └── vu_meter.c     # VU meter style
+│   │       ├── bars.c         # ✅ Bar graph visualization
+│   │       ├── waterfall.c    # ✅ Waterfall spectrogram
+│   │       ├── radial.c       # ✅ Circular spectrum
+│   │       └── mirror.c       # ✅ Mirror mode visualization
 │   ├── touch/
-│   │   ├── xpt2046.c          # Touch controller driver
-│   │   └── touch_ui.c         # Touch gesture handling
+│   │   └── xpt2046.c          # ✅ Touch controller driver & gestures
 │   └── utils/
-│       ├── ring_buffer.c      # Lock-free audio buffer
-│       └── dsp_utils.c        # DSP helper functions
+│       └── mock_audio.c       # ✅ Mock audio for testing (optional)
 │
 ├── include/
-│   ├── config.h               # Pin definitions & constants
+│   ├── config.h               # ✅ Pin definitions & constants
 │   ├── audio/
+│   │   ├── adc_sampler.h      # ✅ ADC sampler interface
+│   │   └── fft_processor.h    # ✅ FFT processor interface
 │   ├── display/
+│   │   ├── ili9341.h          # ✅ Display driver interface
+│   │   ├── theme_manager.h    # ✅ Theme manager interface
+│   │   └── themes/
+│   │       ├── bars.h         # ✅ Bar theme interface
+│   │       ├── waterfall.h    # ✅ Waterfall theme interface
+│   │       ├── radial.h       # ✅ Radial theme interface
+│   │       └── mirror.h       # ✅ Mirror theme interface
 │   ├── touch/
+│   │   └── xpt2046.h          # ✅ Touch controller interface
 │   └── utils/
+│       └── mock_audio.h       # ✅ Mock audio interface
 │
 ├── pio/
-│   └── adc_sampler.pio        # PIO assembly for ADC sampling
-│
-├── lib/
-│   └── CMSIS-DSP/             # ARM DSP library (submodule)
-│
-├── tests/
-│   ├── test_fft.c             # FFT accuracy tests
-│   └── test_display.c         # Display rendering tests
+│   └── adc_sampler.pio        # ✅ PIO assembly for ADC sampling
 │
 ├── scripts/
-│   ├── build.sh               # Build helper script
-│   ├── flash.sh               # Flash helper script
-│   └── monitor.sh             # Serial monitor script
+│   ├── build.sh               # ✅ Build helper script
+│   ├── docker-build.sh        # ✅ Docker build wrapper
+│   └── read_serial.py         # ✅ Serial monitor script
 │
-├── docker/
-│   ├── Dockerfile             # Development container
-│   └── entrypoint.sh          # Container startup script
-│
-├── CMakeLists.txt             # Root CMake configuration
-├── docker-compose.yml         # Docker compose configuration
-├── .dockerignore              # Docker build exclusions
-├── .gitignore                 # Git exclusions
-├── .gitmodules                # Git submodules (Pico SDK, CMSIS-DSP)
-└── README.md                  # This file
+├── asset_images/              # ✅ Project photos and diagrams
+├── datasheets-and-manuals/    # ✅ Hardware documentation
+├── CMakeLists.txt             # ✅ Root CMake configuration
+├── Dockerfile                 # ✅ Development container
+├── docker-compose.yml         # ✅ Docker compose configuration
+├── .dockerignore              # ✅ Docker build exclusions
+├── .gitignore                 # ✅ Git exclusions
+└── README.md                  # ✅ This file
+
+Legend: ✅ Implemented | 🔄 Planned
 ```
 
 ## 🎨 Visualization Themes
 
-### ✅ 1. Classic Bars (Working!)
+### ✅ 1. Classic Bars (Fully Working!)
 Vertical bars representing each frequency band with:
 - Color gradients (green → yellow → red based on amplitude)
 - Peak hold indicators that slowly decay
 - Smooth 30 FPS animation
 - **Best for:** General music visualization, all genres
+- **Status:** ✅ Tested on hardware with live audio
 
-### ✅ 2. Waterfall Spectrogram (Coded, Integration Pending)
+### ✅ 2. Waterfall Spectrogram (Fully Integrated!)
 Scrolling time-frequency display showing spectrum history:
 - Heat map colors (black → blue → cyan → green → yellow → red)
+- 200 rows of scrolling history
 - Shows how frequencies change over time
-- Each new frame scrolls down from top
 - **Best for:** Analyzing frequency patterns, DJ monitoring
+- **Status:** ✅ Fully coded and integrated, ready for hardware test
 
-### 🔄 3. Radial Spectrum (In Development)
+### ✅ 3. Radial Spectrum (Fully Coded!)
 Circular visualization with bands radiating from center:
 - Bars arranged in a circle like a blooming flower
+- Color gradients and smooth animations
+- Variable thickness based on band count
 - Visually striking for displays/parties
 - **Best for:** Music with strong beats, visual impact
+- **Status:** ✅ Fully implemented, ready for hardware test
 
-### 🔄 4. Mirror Mode (Planned)
+### ✅ 4. Mirror Mode (Fully Coded!)
 Symmetric mirrored bars for stereo-like effect:
-- Bars mirrored vertically (top and bottom)
+- Bars mirrored vertically from center line
+- Peak hold indicators on both sides
 - Creates beautiful symmetric patterns
 - **Best for:** Dance music, electronic, bass-heavy tracks
+- **Status:** ✅ Fully implemented, ready for hardware test
 
-### 🔄 5. VU Meter (Planned)
+### 🔄 5. VU Meter (Future Enhancement)
 Analog-style VU meter with smooth needle animation:
 - Classic retro aesthetic
 - Smooth ballistic movement
 - **Best for:** Vintage look, monitoring overall levels
+- **Status:** 🔄 Planned for future release
 
 ## 🔧 Configuration
 
@@ -366,10 +376,17 @@ Analog-style VU meter with smooth needle animation:
 #define TOUCH_HOLD_TIME_MS  800      // Long press threshold
 ```
 
+### Touch Gestures (Fully Implemented!)
+
+- ✅ **Swipe Right** - Next theme (Bars → Waterfall → Radial → Mirror → Bars...)
+- ✅ **Swipe Left** - Previous theme
+- ✅ **Tap** - Show theme name overlay (displays for 2 seconds)
+- ✅ **Long Press** - Reserved for future settings menu
+
 ### Future Runtime Settings (via Touch UI)
 
-- 🔄 Visualization theme switching
-- 🔄 Gain adjustment
+- 🔄 Settings menu (long press to access)
+- 🔄 Gain adjustment slider
 - 🔄 Color scheme selection
 - 🔄 Band count selection (4/8/16/32)
 
@@ -398,12 +415,22 @@ docker-compose run --rm test
 
 ## 🚀 Roadmap
 
-### Next Up (Current Sprint)
-- [ ] Complete touch controller hardware wiring
-- [ ] Integrate touch gestures with theme switching
-- [ ] Finish Radial/Circular visualization
-- [ ] Implement Mirror mode visualization
-- [ ] Add on-screen theme name display
+### ✅ Recently Completed
+- [x] XPT2046 touch controller driver (fully implemented)
+- [x] Gesture detection system (swipe, tap, long press)
+- [x] Theme manager with smooth switching
+- [x] Waterfall spectrogram visualization
+- [x] Radial/circular spectrum visualization
+- [x] Mirror mode visualization
+- [x] On-screen theme name overlay
+- [x] Full touch integration in main application
+
+### Next Up (Hardware Testing)
+- [ ] Wire up touch controller (XPT2046)
+- [ ] Test all four themes with real audio
+- [ ] Test touch gestures (swipe to change themes)
+- [ ] Calibrate touch coordinates if needed
+- [ ] Verify all themes run at 30 FPS
 
 ### Future Enhancements
 - [ ] 3.5mm audio jack input with analog multiplexer
