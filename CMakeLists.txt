@@ -38,46 +38,25 @@ set(SOURCES
     
     # Display driver and themes
     src/display/ili9341.c
+    src/display/theme_manager.c
     src/display/themes/bars.c
+    src/display/themes/waterfall.c
+    src/display/themes/radial.c
+    src/display/themes/mirror.c
+    
+    # Touch controller
+    src/touch/xpt2046.c
     
     # Audio processing
     src/audio/adc_sampler.c
     src/audio/fft_processor.c
     
-    # Spectrum visualization test (comment out)
+    # Optional test/development modules (comment out for release)
     # src/spectrum_viz_test.c
-    
-    # Mock audio generator (comment out)
     # src/utils/mock_audio.c
-    
-    # Display test (comment out)
     # src/display_test.c
-    
-    # Main application (comment out during testing)
     # src/main.c
-    
-    # Simple test for hardware validation (uncomment to test)
     # src/main_simple_test.c
-    
-    # Audio processing modules (to be added)
-    # src/audio/adc_sampler.c
-    # src/audio/fft_processor.c
-    # src/audio/audio_input.c
-    
-    # Display modules (to be added)
-    # src/display/spi_dma.c
-    # src/display/themes/bars.c
-    # src/display/themes/waterfall.c
-    # src/display/themes/radial.c
-    # src/display/themes/vu_meter.c
-    
-    # Touch modules (to be added)
-    # src/touch/xpt2046.c
-    # src/touch/touch_ui.c
-    
-    # Utility modules (to be added)
-    # src/utils/ring_buffer.c
-    # src/utils/dsp_utils.c
 )
 
 # ============================================================================

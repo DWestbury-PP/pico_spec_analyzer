@@ -47,11 +47,10 @@
 #define AUDIO_PIN_SELECT    10  // Input selector (High=Mic, Low=Jack)
 
 // --- Status LED ---
-// For simplicity, we'll use GPIO 15 for LED on both Pico and Pico W
-// This avoids the complexity of CYW43 wireless chip LED on Pico W
-// You can connect an external LED to GP15 with a resistor (220-330 ohm)
-// Or use any other free GPIO pin
-#define LED_PIN         15  // External LED (safe for both Pico and Pico W)
+// Note: GP15 is used by touch controller (MOSI)
+// For status LED, we'll use USB serial output instead of physical LED
+// Or you can use any other free GPIO pin (e.g., GP11, GP28)
+// #define LED_PIN         11  // External LED (optional)
 
 // --- Debug UART ---
 #define UART_ID             uart0
@@ -86,7 +85,8 @@
 #define WINDOW_FUNCTION     WINDOW_HANN     // HANN, HAMMING, BLACKMAN
 #define AUTO_GAIN_ENABLED   true            // Enable automatic gain control
 #define MIC_GAIN_DEFAULT    50              // 0-100%
-#define PEAK_DECAY_RATE     0.95f           // Peak hold decay factor
+#define PEAK_DECAY_RATE     0.95f           // Peak hold decay factor per frame
+#define PEAK_HOLD_MS        1500            // Peak hold time in milliseconds
 #define SMOOTHING_FACTOR    0.7f            // Temporal smoothing (0=none, 1=full)
 
 // FFT visualization gain (increase if bars are too small)

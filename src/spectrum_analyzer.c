@@ -3,13 +3,14 @@
  * @brief Real-time spectrum analyzer with live audio input
  * 
  * Captures audio from MAX4466 microphone, performs FFT,
- * and displays spectrum on ILI9341 display.
+ * displays spectrum on ILI9341 display with touch-controlled themes.
  */
 
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "display/ili9341.h"
-#include "display/themes/bars.h"
+#include "display/theme_manager.h"
+#include "touch/xpt2046.h"
 #include "audio/adc_sampler.h"
 #include "audio/fft_processor.h"
 #include "config.h"
@@ -55,10 +56,19 @@ int main(void) {
     ili9341_set_rotation(DISPLAY_ROTATION);
     printf("Display ready: %dx%d\n\n", ili9341_width(), ili9341_height());
     
-    // Initialize visualization
-    printf("Initializing visualization...\n");
-    bars_init();
-    bars_clear();
+    // Initialize touch controller
+    printf("Initializing touch controller...\n");
+    if (!xpt2046_init()) {
+        printf("WARNING: Touch controller initialization failed!\n");
+        printf("         (Touch features will be disabled)\n");
+    } else {
+        printf("Touch controller ready\n");
+    }
+    
+    // Initialize theme manager (includes all visualizations)
+    printf("Initializing theme manager...\n");
+    theme_manager_init();
+    printf("Current theme: %s\n", theme_manager_get_name());
     
     // Initialize ADC sampler
     printf("Initializing ADC sampler...\n");
@@ -84,6 +94,10 @@ int main(void) {
     
     printf("Make some noise! Clap, talk, play music...\n");
     printf("Watch the display for live spectrum visualization!\n\n");
+    
+    printf("Touch controls:\n");
+    printf("  • Swipe LEFT/RIGHT: Change visualization theme\n");
+    printf("  • TAP: Show current theme name\n\n");
     
     printf("Performance stats will be printed periodically...\n\n");
     
@@ -115,6 +129,33 @@ int main(void) {
     while (true) {
         absolute_time_t frame_start = get_absolute_time();
         
+        // Handle touch input and gestures
+        touch_gesture_t gesture = xpt2046_detect_gesture();
+        switch (gesture) {
+            case GESTURE_SWIPE_RIGHT:
+                printf("Gesture: Swipe RIGHT -> Next theme\n");
+                theme_manager_next();
+                printf("Theme: %s\n", theme_manager_get_name());
+                break;
+            case GESTURE_SWIPE_LEFT:
+                printf("Gesture: Swipe LEFT -> Previous theme\n");
+                theme_manager_prev();
+                printf("Theme: %s\n", theme_manager_get_name());
+                break;
+            case GESTURE_TAP:
+                printf("Gesture: TAP -> Show theme name\n");
+                theme_manager_show_name(2000);  // Show for 2 seconds
+                break;
+            case GESTURE_LONG_PRESS:
+                printf("Gesture: LONG PRESS -> (Future: Settings menu)\n");
+                break;
+            default:
+                break;
+        }
+        
+        // Update theme overlay (fade out if expired)
+        theme_manager_update_overlay();
+        
         // Check if we have enough samples for FFT
         if (adc_sampler_available() >= FFT_SIZE) {
             // Read samples
@@ -123,8 +164,8 @@ int main(void) {
             if (samples_read == FFT_SIZE) {
                 // Perform FFT and extract frequency bands
                 if (fft_processor_compute(audio_samples, frequency_bands, NUM_BANDS)) {
-                    // Render visualization
-                    bars_render(frequency_bands, NUM_BANDS);
+                    // Render current theme visualization
+                    theme_manager_render(frequency_bands, NUM_BANDS);
                 } else {
                     fft_failures++;
                 }
