@@ -94,7 +94,7 @@ Pico W GPIO Assignments:
 │   ├── GP13 - CS (Chip Select)
 │   ├── GP14 - SCK (Clock @ 2MHz)
 │   ├── GP15 - MOSI (Data Out)
-│   └── GP23 - IRQ (Interrupt, active low)
+│   └── GP11 - IRQ (Interrupt, active low)
 │
 ├── Audio Input - ✅ Working
 │   └── GP26 (ADC0) - MAX4466 Microphone
@@ -155,7 +155,7 @@ Pico W GPIO Assignments:
 | CLK | Clock | GP14 | Pin 19 | SPI1 SCK @ 2MHz |
 | DIN | Data In | GP15 | Pin 20 | SPI1 MOSI (data to touch IC) |
 | DO | Data Out | GP12 | Pin 16 | SPI1 MISO (data from touch IC) |
-| IRQ | Interrupt | GP23 | Pin 30 | Optional, active low when touched |
+| IRQ | Interrupt | GP11 | Pin 15 | Optional, active low when touched |
 
 **Important Notes:**
 - XPT2046 is the touch controller commonly found on ILI9341 display modules
@@ -164,6 +164,7 @@ Pico W GPIO Assignments:
 - IRQ pin goes LOW when the screen is touched (useful for power saving)
 - Touch coordinates are read as 12-bit ADC values and calibrated to screen pixels
 - The controller operates at 3.3V logic levels
+- ⚠️ **Pico W Note:** GP23-25,29 are used by CYW43 wireless chip (not available on pins)
 
 **Wiring Tips:**
 - If your display module has an integrated touch controller, it may share some pins

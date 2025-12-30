@@ -32,12 +32,14 @@
 
 // --- Touch Controller Configuration (XPT2046) ---
 #define TOUCH_SPI_PORT      spi1
-#define TOUCH_PIN_MISO      12  // Data In
-#define TOUCH_PIN_CS        13  // Chip Select
-#define TOUCH_PIN_SCK       14  // Clock
-#define TOUCH_PIN_MOSI      15  // Data Out
-#define TOUCH_PIN_IRQ       23  // Interrupt (active low)
+#define TOUCH_PIN_MISO      12  // Data In (GP12, Pin 16)
+#define TOUCH_PIN_CS        13  // Chip Select (GP13, Pin 17)
+#define TOUCH_PIN_SCK       14  // Clock (GP14, Pin 19)
+#define TOUCH_PIN_MOSI      15  // Data Out (GP15, Pin 20)
+#define TOUCH_PIN_IRQ       11  // Interrupt - active low (GP11, Pin 15)
 #define TOUCH_SPI_SPEED     (2 * 1000 * 1000)  // 2 MHz
+
+// Note: GP23-25,29 are used internally by CYW43 wireless on Pico W
 
 // --- Audio Input Configuration ---
 #define AUDIO_ADC_MIC       0   // ADC channel 0 (GP26)
