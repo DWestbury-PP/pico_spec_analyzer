@@ -184,8 +184,8 @@ bool fft_processor_compute(const uint16_t *samples, float *bands, uint8_t num_ba
         float avg = (count > 0) ? (sum / count) : 0.0f;
         
         // Normalize and apply logarithmic scaling for better visualization
-        // Typical FFT magnitude range is 0-100 for our input range
-        avg = avg / 50.0f;  // Scale to roughly 0-2 range
+        // Use configurable gain for display sensitivity
+        avg = avg / FFT_DISPLAY_GAIN;  // Adjust in config.h if needed
         
         // Apply logarithmic compression
         if (avg > 0.0f) {

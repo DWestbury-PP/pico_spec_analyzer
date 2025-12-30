@@ -89,6 +89,10 @@
 #define PEAK_DECAY_RATE     0.95f           // Peak hold decay factor
 #define SMOOTHING_FACTOR    0.7f            // Temporal smoothing (0=none, 1=full)
 
+// FFT visualization gain (increase if bars are too small)
+// Typical values: 5.0 (high gain) to 50.0 (low gain)
+#define FFT_DISPLAY_GAIN    5.0f            // Lower = more sensitive
+
 // ============================================================================
 // DISPLAY CONFIGURATION
 // ============================================================================
