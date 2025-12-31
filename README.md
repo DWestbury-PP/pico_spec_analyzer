@@ -1,15 +1,13 @@
 # Raspberry Pi Pico Spectrum Analyzer
 ![Fully Wired Spectrum Analyzer](./asset_images/fully_wired.jpeg)
 
-
-
 A real-time audio spectrum analyzer for the Raspberry Pi Pico W, featuring FFT-based frequency analysis with multiple visualization themes on an SPI TFT display.
 
-## 📋 Project Overview
+## Project Overview
 
 This project creates a minimalist yet powerful spectrum analyzer that processes audio input in real-time, breaks it down into configurable frequency bands using Fast Fourier Transform (FFT), and displays the results with beautiful visualizations on a 2.8" ILI9341 TFT display.
 
-### ✅ Implemented Features
+### Implemented Features
 
 - **Real-Time Audio Input**
   - ✅ MAX4466 electret microphone with adjustable gain
@@ -47,7 +45,7 @@ This project creates a minimalist yet powerful spectrum analyzer that processes 
   - ✅ Smooth 30 FPS rendering
   - ✅ Efficient DMA-based screen updates
 
-## 🏗️ Architecture
+## Architecture
 
 ### Dual-Core Processing Strategy
 
@@ -177,7 +175,7 @@ Pico W GPIO Assignments:
 - Touch calibration may be needed - adjust `TOUCH_X_MIN/MAX` and `TOUCH_Y_MIN/MAX` in code
 - Test with light finger pressure - resistive touch requires physical contact
 
-## 🛠️ Development Setup
+## Development Setup
 
 ### Prerequisites
 
@@ -250,7 +248,7 @@ cmake ..
 make -j4
 ```
 
-## 📦 Project Structure
+## Project Structure
 
 ```
 pico_spec_analyzer/
@@ -313,7 +311,7 @@ pico_spec_analyzer/
 Legend: ✅ Production Code | 🧪 Test/Development Tools | 🔄 Planned
 ```
 
-## 🎨 Visualization Themes
+## Visualization Themes
 
 ### ✅ 1. Classic Bars (Fully Working!)
 Vertical bars representing each frequency band with:
@@ -355,7 +353,7 @@ Analog-style VU meter with smooth needle animation:
 - **Best for:** Vintage look, monitoring overall levels
 - **Status:** 🔄 Planned for future release
 
-## 🔧 Configuration
+## Configuration
 
 ### Compile-Time Options (`include/config.h`)
 
@@ -393,7 +391,7 @@ Analog-style VU meter with smooth needle animation:
 - 🔄 Color scheme selection
 - 🔄 Band count selection (4/8/16/32)
 
-## 🧪 Testing & Staged Development
+## Testing & Staged Development
 
 The project includes test programs for staged development and validation:
 
@@ -438,7 +436,7 @@ python3 scripts/read_serial.py
 screen /dev/tty.usbmodem* 115200
 ```
 
-## 📊 Performance (Measured on Hardware)
+## Performance (Measured on Hardware)
 
 - **Audio Latency**: ~1ms ✅ (input to FFT processing)
 - **Display Refresh**: 30 FPS ✅ (smooth, consistent)
@@ -448,7 +446,7 @@ screen /dev/tty.usbmodem* 115200
 - **Frequency Range**: 20Hz - 11kHz ✅ (tested with full sweep)
 - **CPU Utilization**: Well within limits ✅ (room for more features)
 
-## 🚀 Roadmap
+## Roadmap
 
 ### ✅ Recently Completed
 - [x] XPT2046 touch controller driver (fully implemented)
@@ -478,7 +476,7 @@ screen /dev/tty.usbmodem* 115200
 - [ ] WS2812 LED ring for ambient visualization
 - [ ] Battery power support with LiPo
 
-## 📚 References
+## References
 
 - [Raspberry Pi Pico Datasheet](./datasheets-and-manuals/Datasheet_RP-008307-DS-1-pico.pdf)
 - [ILI9341 Display Datasheet](./datasheets-and-manuals/Datasheet_ILI9341.pdf)
@@ -488,3 +486,4 @@ screen /dev/tty.usbmodem* 115200
 - [ARM CMSIS-DSP Library](https://github.com/ARM-software/CMSIS-DSP)
 - [PIO Assembly Guide](https://datasheets.raspberrypi.com/pico/raspberry-pi-pico-c-sdk.pdf)
 
+---
