@@ -53,10 +53,10 @@ This project creates a minimalist yet powerful spectrum analyzer that processes 
 The analyzer uses a **simple, efficient single-core architecture** that achieves 30 FPS with room to spare:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│               Raspberry Pi Pico W (RP2040)                  │
-│                                                             │
-│  Main Loop (Core 0):                                        │
+┌───────────────────────────────────────────────────────────┐
+│               Raspberry Pi Pico W (RP2040)                │
+│                                                           │
+│  Main Loop (Core 0):                                      │
 │  ┌─────────────────────────────────────────────────────┐  │
 │  │ 1. Check for touch input → Process gestures         │  │
 │  │ 2. Read audio samples → ADC (timer + DMA)           │  │
@@ -64,12 +64,12 @@ The analyzer uses a **simple, efficient single-core architecture** that achieves
 │  │ 4. Render visualization → Current theme             │  │
 │  │ 5. Frame rate limiting → 30 FPS target              │  │
 │  └─────────────────────────────────────────────────────┘  │
-│                                                             │
-│  Background Tasks:                                          │
-│  • Timer-triggered ADC conversions (22,050 Hz)             │
-│  • DMA transfers samples to circular buffer                │
-│  • SPI display updates via DMA                             │
-└─────────────────────────────────────────────────────────────┘
+│                                                           │
+│  Background Tasks:                                        │
+│  • Timer-triggered ADC conversions (22,050 Hz)            │
+│  • DMA transfers samples to circular buffer               │
+│  • SPI display updates via DMA                            │
+└───────────────────────────────────────────────────────────┘
 ```
 
 **Why Single-Core?**
