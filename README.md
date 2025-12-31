@@ -269,8 +269,11 @@ pico_spec_analyzer/
 │   │       └── mirror.c       # ✅ Mirror mode visualization
 │   ├── touch/
 │   │   └── xpt2046.c          # ✅ Touch controller driver & gestures
-│   └── utils/
-│       └── mock_audio.c       # ✅ Mock audio for testing (optional)
+│   ├── utils/
+│   │   └── mock_audio.c       # 🧪 Mock audio for testing
+│   ├── main_simple_test.c     # 🧪 Test: LED blink & serial (Stage 1)
+│   ├── display_test.c         # 🧪 Test: Display validation (Stage 2)
+│   └── spectrum_viz_test.c    # 🧪 Test: Themes with mock audio (Stage 3)
 │
 ├── include/
 │   ├── config.h               # ✅ Pin definitions & constants
@@ -307,7 +310,7 @@ pico_spec_analyzer/
 ├── .gitignore                 # ✅ Git exclusions
 └── README.md                  # ✅ This file
 
-Legend: ✅ Implemented | 🔄 Planned
+Legend: ✅ Production Code | 🧪 Test/Development Tools | 🔄 Planned
 ```
 
 ## 🎨 Visualization Themes
@@ -390,17 +393,49 @@ Analog-style VU meter with smooth needle animation:
 - 🔄 Color scheme selection
 - 🔄 Band count selection (4/8/16/32)
 
-## 🧪 Testing
+## 🧪 Testing & Staged Development
 
+The project includes test programs for staged development and validation:
+
+### Stage 1: Hardware Validation
+Test basic Pico functionality (LED blink, serial output):
 ```bash
-# Run unit tests (in Docker)
-docker-compose run --rm test
+# Edit CMakeLists.txt - uncomment main_simple_test.c, comment spectrum_analyzer.c
+docker-compose run --rm build
+# Flash and verify LED blinks
+```
 
-# Hardware test mode (uploads test firmware)
-./scripts/flash.sh test
+### Stage 2: Display Validation  
+Test ILI9341 display driver and SPI communication:
+```bash
+# Edit CMakeLists.txt - uncomment display_test.c, comment spectrum_analyzer.c
+docker-compose run --rm build
+# Flash and verify display shows color test patterns
+```
 
-# Monitor serial output
-./scripts/monitor.sh
+### Stage 3: Visualization Testing
+Test all themes with simulated audio (no microphone needed):
+```bash
+# Edit CMakeLists.txt - uncomment spectrum_viz_test.c and mock_audio.c, comment spectrum_analyzer.c
+docker-compose run --rm build
+# Flash and verify animated spectrum bars with simulated audio transients
+```
+
+### Stage 4: Full System
+Run complete spectrum analyzer with real audio:
+```bash
+# Edit CMakeLists.txt - use spectrum_analyzer.c (default)
+docker-compose run --rm build
+# Flash and test with live microphone input
+```
+
+### Monitor Serial Output
+```bash
+# Option 1: Python script (recommended)
+python3 scripts/read_serial.py
+
+# Option 2: screen
+screen /dev/tty.usbmodem* 115200
 ```
 
 ## 📊 Performance (Measured on Hardware)
