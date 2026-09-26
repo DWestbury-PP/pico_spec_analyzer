@@ -1,5 +1,11 @@
 # Raspberry Pi Pico Spectrum Analyzer
-![Fully Wired Spectrum Analyzer](./asset_images/fully_wired.jpeg)
+
+| | | |
+|:---:|:---:|:---:|
+| <img src="./asset_images/pico_spec_viz6_spectrum.jpg" alt="Spectrum theme" width="300"> | <img src="./asset_images/pico_spec_viz1_analyzer.jpg" alt="Analyzer theme" width="300"> | <img src="./asset_images/pico_spec_viz2_spectrogram.jpg" alt="Spectrogram theme" width="300"> |
+| **Spectrum** | **Analyzer** | **Spectrogram** |
+| <img src="./asset_images/pico_spec_viz5_terrain.jpg" alt="Terrain theme" width="300"> | <img src="./asset_images/pico_spec_viz3_nova.jpg" alt="Nova theme" width="300"> | <img src="./asset_images/pico_spec_viz4_scope.jpg" alt="Scope theme" width="300"> |
+| **Terrain** | **Nova** | **Scope** |
 
 A real-time audio spectrum analyzer for the Raspberry Pi Pico W: dual-core, DMA-driven, fixed-point dual-resolution FFT, and six visualizations at 50 fps on a 2.8" ILI9341 TFT.
 
