@@ -2,9 +2,9 @@
  * @file ili9341.c
  * @brief ILI9341 driver: register setup plus IRQ-driven indexed-frame streaming.
  *
- * Streaming works in 16-row strips. While DMA sends strip s, the IRQ that
+ * Streaming works in 8-row strips. While DMA sends strip s, the IRQ that
  * started it palette-expands strip s+1 into the other buffer. The CPU cost is
- * about 50 us per 1.3 ms strip, and the SPI never idles for longer than IRQ entry.
+ * about 25 us per 0.65 ms strip, and the SPI never idles for longer than IRQ entry.
  */
 
 #include "display/ili9341.h"
@@ -14,6 +14,7 @@
 #include "hardware/gpio.h"
 #include "hardware/dma.h"
 #include "hardware/irq.h"
+#include "pico/time.h"
 #include <string.h>
 
 #define NSTRIPS        (DISPLAY_HEIGHT / ILI9341_STRIP_H)
@@ -29,6 +30,7 @@ static const uint8_t *_fb;
 static const uint16_t *_pal;
 static volatile int _strip;
 static volatile bool _busy;
+static volatile uint64_t _done_us;
 static int _dma_ch = -1;
 
 // ============================================================================
@@ -182,7 +184,7 @@ uint8_t ili9341_read_reg(uint8_t reg, uint8_t index) {
 }
 
 int ili9341_selftest(void) {
-    enum { W = 64, H = 16, N = W * H };
+    enum { W = 32, H = 8, N = W * H };
     static uint16_t pat[N];
     static uint8_t rd[1 + 3 * N];
     uint32_t seed = 0x1234567u;
@@ -253,6 +255,7 @@ static void RAMFUNC(stream_irq)(void) {
         dma_channel_transfer_from_buffer_now(_dma_ch, _strip_buf[s & 1], STRIP_PIXELS);
         if (s + 1 < NSTRIPS) convert_strip(s + 1, _strip_buf[(s + 1) & 1]);
     } else {
+        _done_us = time_us_64();
         _busy = false;
     }
 }
@@ -287,6 +290,10 @@ void ili9341_stream_begin(const uint8_t *fb, const uint16_t *palette) {
 
 bool ili9341_stream_busy(void) {
     return _busy;
+}
+
+uint64_t ili9341_stream_done_us(void) {
+    return _done_us;
 }
 
 void ili9341_stream_wait(void) {

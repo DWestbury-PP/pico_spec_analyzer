@@ -125,7 +125,7 @@ uint32_t ili9341_stream_hz(void);
 
 // --- Full-frame streaming from an 8-bit indexed framebuffer ---------------
 
-#define ILI9341_STRIP_H 16
+#define ILI9341_STRIP_H 8
 
 /**
  * Install the DMA completion IRQ on the calling core. Call on the core that
@@ -141,6 +141,9 @@ void ili9341_stream_init(void);
 void ili9341_stream_begin(const uint8_t *fb, const uint16_t *palette);
 
 bool ili9341_stream_busy(void);
+
+/** time_us_64() at which the last strip left the DMA (end of the previous stream). */
+uint64_t ili9341_stream_done_us(void);
 
 /** Block until the frame is on the panel and the bus is released. */
 void ili9341_stream_wait(void);

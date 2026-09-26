@@ -10,10 +10,25 @@
 #include <stdlib.h>
 #include <string.h>
 
-uint8_t  g_fb[FB_H * FB_W] __attribute__((aligned(4)));
-uint16_t g_palette[256];
+static uint8_t  _fbuf[2][FB_BYTES] __attribute__((aligned(4)));
+static uint16_t _pal[2][256];
+static int _back;
+static bool _front_valid;
+
+uint8_t  *g_fb = _fbuf[0];
+uint16_t *g_palette = _pal[0];
 
 #define DIM_FACTOR 0.30f
+
+// Save-under for overlays, one set per buffer
+#define SAVE_BYTES 7168
+#define SAVE_RECTS 4
+typedef struct {
+    int n, used;
+    struct { int16_t x, y, w, h; uint16_t off; } r[SAVE_RECTS];
+    uint8_t px[SAVE_BYTES];
+} saveunder_t;
+static saveunder_t _save[2];
 
 // ============================================================================
 // Palette
@@ -54,7 +69,12 @@ void gfx_ramp(uint8_t start, int n, const uint32_t *stops, int nstops) {
 }
 
 void gfx_init(void) {
-    memset(g_palette, 0, sizeof(g_palette));
+    memset(_pal, 0, sizeof(_pal));
+    memset(_save, 0, sizeof(_save));
+    _back = 0;
+    g_fb = _fbuf[0];
+    g_palette = _pal[0];
+    _front_valid = false;
     gfx_set_color(0, 0x000000);
     gfx_set_color(UI_WHITE,   0xFFFFFF);
     gfx_set_color(UI_LIGHT,   0xC8CCD8);
@@ -65,6 +85,63 @@ void gfx_init(void) {
     gfx_set_color(UI_WARN,    0xFFB020);
     gfx_set_color(UI_GOOD,    0x40FF90);
     gfx_clear(0);
+    memcpy(_pal[1], _pal[0], sizeof(_pal[0]));
+    memset(_fbuf[1], 0, FB_BYTES);
+}
+
+// ============================================================================
+// Double buffering
+// ============================================================================
+
+const uint8_t *gfx_front_fb(void)       { return _fbuf[_back ^ 1]; }
+const uint16_t *gfx_front_palette(void) { return _pal[_back ^ 1]; }
+
+void gfx_swap(void) {
+    _back ^= 1;
+    g_fb = _fbuf[_back];
+    g_palette = _pal[_back];
+    memcpy(g_palette, _pal[_back ^ 1], sizeof(_pal[0]));
+    _save[_back].n = 0;
+    _save[_back].used = 0;
+    _front_valid = true;
+}
+
+void gfx_invalidate_front(void) {
+    _front_valid = false;
+}
+
+void RAMFUNC(gfx_copy_front)(void) {
+    if (!_front_valid) {
+        gfx_clear(0);
+        return;
+    }
+    const uint32_t *s = (const uint32_t *)_fbuf[_back ^ 1];
+    uint32_t *d = (uint32_t *)g_fb, *end = d + FB_BYTES / 4;
+    while (d < end) { d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3]; d += 4; s += 4; }
+
+    // Newest overlay first: later overlays may have saved pixels of earlier ones
+    const saveunder_t *sv = &_save[_back ^ 1];
+    for (int i = sv->n - 1; i >= 0; i--) {
+        const uint8_t *src = &sv->px[sv->r[i].off];
+        for (int j = 0; j < sv->r[i].h; j++, src += sv->r[i].w)
+            memcpy(&g_fb[(sv->r[i].y + j) * FB_W + sv->r[i].x], src, (size_t)sv->r[i].w);
+    }
+}
+
+void gfx_overlay_rect(int x, int y, int w, int h) {
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > FB_W) w = FB_W - x;
+    if (y + h > FB_H) h = FB_H - y;
+    saveunder_t *sv = &_save[_back];
+    if (w <= 0 || h <= 0 || sv->n >= SAVE_RECTS || sv->used + w * h > SAVE_BYTES) return;
+    sv->r[sv->n].x = (int16_t)x; sv->r[sv->n].y = (int16_t)y;
+    sv->r[sv->n].w = (int16_t)w; sv->r[sv->n].h = (int16_t)h;
+    sv->r[sv->n].off = (uint16_t)sv->used;
+    uint8_t *dst = &sv->px[sv->used];
+    for (int j = 0; j < h; j++, dst += w) memcpy(dst, &g_fb[(y + j) * FB_W + x], (size_t)w);
+    sv->used += w * h;
+    sv->n++;
 }
 
 // ============================================================================
@@ -73,7 +150,7 @@ void gfx_init(void) {
 
 void RAMFUNC(gfx_clear)(uint8_t idx) {
     uint32_t w = idx * 0x01010101u;
-    uint32_t *p = (uint32_t *)g_fb, *end = p + sizeof(g_fb) / 4;
+    uint32_t *p = (uint32_t *)g_fb, *end = p + FB_BYTES / 4;
     while (p < end) { p[0] = w; p[1] = w; p[2] = w; p[3] = w; p += 4; }
 }
 

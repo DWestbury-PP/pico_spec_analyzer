@@ -4,8 +4,9 @@
  *        motion trails via palette-index fading, bass-pulsed core and
  *        beat-triggered shockwaves.
  *
- * Instead of clearing, each frame remaps every pixel one brightness step down
- * inside its hue, so spokes leave fading trails as the ring spins.
+ * Each frame starts from the previous one and remaps every pixel one
+ * brightness step down inside its hue, so spokes leave fading trails as the
+ * ring spins.
  */
 
 #include "display/theme.h"
@@ -94,6 +95,7 @@ static void spoke(float ang, float r0, float r1, uint8_t idx) {
 }
 
 static void RAMFUNC(draw)(const spectrum_frame_t *f) {
+    gfx_copy_front();
     gfx_remap(_fade);
 
     const float r0 = 24.0f + _bass * 20.0f;

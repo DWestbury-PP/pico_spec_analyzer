@@ -16,7 +16,7 @@
 #include <stdint.h>
 #include "audio/spectrum.h"
 
-#define HOPQ_LEN 16   // 85 ms of hops; the render loop drains every frame
+#define HOPQ_LEN 8    // 43 ms of hops; the render loop drains at least every 20 ms
 
 typedef enum {
     TEST_OFF = 0,

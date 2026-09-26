@@ -41,6 +41,7 @@ static void update(const spectrum_frame_t *f, float dt) {
 }
 
 static void RAMFUNC(draw)(const spectrum_frame_t *f) {
+    gfx_copy_front();
     gfx_remap(_fade);
 
     // Graticule on empty pixels only, so trails stay on top

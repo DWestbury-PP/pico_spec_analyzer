@@ -2,12 +2,16 @@
  * @file renderer.c
  * @brief Core 1 frame loop.
  *
- *   ┌ previous frame streaming (DMA IRQ) ┐ ┌ draw phase ─────────────────────────────┐
- *     drain hop queue, touch/serial input    latest mailbox, update(), draw(), overlays,
- *                                            stream_begin()
+ * Double-buffered and overlapped: frame N+1 is drawn into the back buffer while
+ * frame N streams from the front buffer by DMA IRQ. The frame period is
+ * max(draw, stream), and the SPI transfer is ~19.8 ms at 62.5 MHz.
  *
- * Reading the mailbox only after the previous frame is on the glass keeps
- * sample-to-photon latency at roughly draw + one SPI transfer (~19.7 ms at 62.5 MHz).
+ *   stream N  |=====================================|
+ *   draw N+1                         |-- draw --|  ^ swap, stream N+1
+ *                                    ^ just-in-time start (latest mailbox)
+ *
+ * Starting the draw just in time keeps sample-to-photon latency at about
+ * draw + one transfer, while the frame rate is set by the transfer alone.
  */
 
 #include "display/renderer.h"
@@ -44,6 +48,8 @@ static char _popup[32];
 static uint64_t _popup_until;
 
 static spectrum_frame_t _frame;
+
+#define JIT_MARGIN_US 700   // slack between finishing a draw and the stream completing
 
 // Stats (reset every report)
 typedef struct {
@@ -118,6 +124,7 @@ static void draw_hud(void) {
     int w = gfx_text_width(l2, 1);
     int w1 = gfx_text_width(l1, 1);
     if (w1 > w) w = w1;
+    gfx_overlay_rect(0, 0, w + 6, 21);
     gfx_dim_rect(0, 0, w + 6, 21);
     gfx_text(3, 2, l1, UI_GOOD, 1);
     gfx_text(3, 11, l2, UI_LIGHT, 1);
@@ -126,10 +133,11 @@ static void draw_hud(void) {
 static void draw_popup(void) {
     if (time_us_64() >= _popup_until) return;
     int w = gfx_text_width(_popup, 2);
-    int x = (FB_W - w) / 2, y = FB_H / 2 - 12;
-    gfx_dim_rect(x - 12, y - 10, w + 24, 34);
-    gfx_hline(x - 12, x + w + 11, y - 10, UI_ACCENT);
-    gfx_hline(x - 12, x + w + 11, y + 23, UI_ACCENT);
+    int x = (FB_W - w) / 2, y = FB_H / 2 - 7;
+    gfx_overlay_rect(x - 12, y - 7, w + 24, 28);
+    gfx_dim_rect(x - 12, y - 7, w + 24, 28);
+    gfx_hline(x - 12, x + w + 11, y - 7, UI_ACCENT);
+    gfx_hline(x - 12, x + w + 11, y + 20, UI_ACCENT);
     gfx_text(x, y, _popup, UI_WHITE, 2);
 }
 
@@ -139,7 +147,7 @@ static void draw_popup(void) {
 
 static void dump_framebuffer(void) {
     static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    const uint32_t pal_bytes = sizeof(g_palette), total = pal_bytes + sizeof(g_fb);
+    const uint32_t pal_bytes = 256 * sizeof(uint16_t), total = pal_bytes + FB_BYTES;
     char line[80];
     int n = 0;
     printf("\n#FB %d %d\n", FB_W, FB_H);
@@ -211,10 +219,11 @@ void renderer_run(void) {
     uint32_t seen = 0;
     bool streaming = false;
     uint64_t stream_start = 0, stream_t_newest = 0;
+    uint32_t stream_us = 20000, draw_est_us = 4000;
     uint64_t last = time_us_64(), last_report = last;
 
     while (true) {
-        // ---- while the previous frame streams: queued hops and input ----
+        // ---- frame N is streaming from the front buffer ----
         const spectrum_hop_t *h;
         while ((h = hopq_peek()) != NULL) {
             if (theme->on_hop) theme->on_hop(h);
@@ -222,32 +231,31 @@ void renderer_run(void) {
         }
         handle_input();
 
-        ili9341_stream_wait();
-        uint64_t glass = time_us_64();
+        // Just-in-time start: finish drawing N+1 about when N finishes streaming,
+        // so the spectrum we draw is as fresh as possible.
         if (streaming) {
-            _st.stream_us_sum += (uint32_t)(glass - stream_start);
-            uint32_t lat = (uint32_t)(glass - stream_t_newest);
-            _st.lat_us_sum += lat;
-            _st.lat_n++;
-            if (lat > _st.lat_us_max) _st.lat_us_max = lat;
+            uint64_t start_at = stream_start + stream_us - draw_est_us - JIT_MARGIN_US;
+            while (ili9341_stream_busy() && time_us_64() < start_at) {
+                while ((h = hopq_peek()) != NULL) {
+                    if (theme->on_hop) theme->on_hop(h);
+                    hopq_pop();
+                }
+            }
         }
 
-        // ---- draw phase: freshest spectrum, straight to the panel ----
+        // ---- draw frame N+1 into the back buffer ----
         uint64_t now = time_us_64();
         float dt = (now - last) / 1e6f;
         last = now;
         mailbox_read(&_frame, &seen);
         crash_heartbeat(_frame.hop);
 
-        if (_dump_pending) {
-            dump_framebuffer();
-            _dump_pending = false;
-        }
         if (_pending_theme >= 0) {
             _theme_idx = _pending_theme;
             _pending_theme = -1;
             theme = _themes[_theme_idx];
             theme->enter();
+            gfx_invalidate_front();
             popup(theme->name, 1500);
             printf("theme: %s\n", theme->name);
         }
@@ -260,10 +268,29 @@ void renderer_run(void) {
         uint32_t draw_us = (uint32_t)(time_us_64() - t0);
         _st.draw_us_sum += draw_us;
         if (draw_us > _st.draw_us_max) _st.draw_us_max = draw_us;
+        draw_est_us = draw_us > draw_est_us ? draw_us : draw_est_us - (draw_est_us >> 6);
 
+        if (_dump_pending) {
+            dump_framebuffer();
+            _dump_pending = false;
+        }
+
+        // ---- frame N done: account for it, then stream N+1 ----
+        ili9341_stream_wait();
+        if (streaming) {
+            uint64_t glass = ili9341_stream_done_us();
+            stream_us = (uint32_t)(glass - stream_start);
+            _st.stream_us_sum += stream_us;
+            uint32_t lat = (uint32_t)(glass - stream_t_newest);
+            _st.lat_us_sum += lat;
+            _st.lat_n++;
+            if (lat > _st.lat_us_max) _st.lat_us_max = lat;
+        }
+
+        gfx_swap();
         stream_start = time_us_64();
         stream_t_newest = _frame.t_newest_us;
-        ili9341_stream_begin(g_fb, g_palette);
+        ili9341_stream_begin(gfx_front_fb(), gfx_front_palette());
         streaming = true;
         _st.frames++;
 

@@ -1,6 +1,9 @@
 /**
  * @file gfx.h
- * @brief 8-bit indexed framebuffer, palette management and drawing primitives.
+ * @brief Double-buffered 8-bit indexed framebuffer, palettes and drawing primitives.
+ *
+ * All drawing targets the back buffer (g_fb / g_palette) while the front
+ * buffer streams to the panel. gfx_swap() exchanges them.
  *
  * Palette layout:
  *   0          background (black)
@@ -34,10 +37,31 @@ enum {
     UI_GOOD,
 };
 
-extern uint8_t  g_fb[FB_H * FB_W];
-extern uint16_t g_palette[256];
+#define FB_BYTES (FB_W * FB_H)
+
+extern uint8_t  *g_fb;         // back buffer (draw target)
+extern uint16_t *g_palette;    // back palette
 
 void gfx_init(void);
+
+const uint8_t  *gfx_front_fb(void);
+const uint16_t *gfx_front_palette(void);
+
+/** Back becomes front (to be streamed); the new back palette starts as a copy. */
+void gfx_swap(void);
+
+/** Start the back buffer from the previous frame, with overlays removed. */
+void gfx_copy_front(void);
+
+/** The front no longer holds this theme's content (theme switch): copy_front clears instead. */
+void gfx_invalidate_front(void);
+
+/**
+ * Save the back-buffer pixels under an overlay rectangle before drawing it, so
+ * the next frame's gfx_copy_front() can restore them. Silently skips if the
+ * save-under budget is exhausted.
+ */
+void gfx_overlay_rect(int x, int y, int w, int h);
 
 /** Set colour idx (0..127) from 0xRRGGBB; also sets its dim twin. */
 void gfx_set_color(uint8_t idx, uint32_t rgb);

@@ -19,7 +19,7 @@
 #include <math.h>
 #include <string.h>
 
-#define RING_LOG2   12
+#define RING_LOG2   11
 #define RING_N      (1 << RING_LOG2)
 #define RING_MASK   (RING_N - 1)
 #define LO_RING_N   512                   // CIC output history (power of two >= LO_N)

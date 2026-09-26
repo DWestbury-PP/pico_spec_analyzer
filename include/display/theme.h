@@ -30,7 +30,7 @@ extern const theme_t theme_radial;
 extern const theme_t theme_scope;
 
 // Scratch memory shared by themes (only the active theme uses it).
-#define THEME_ARENA_BYTES (320 * 224)
+#define THEME_ARENA_BYTES (8 * 1024)
 extern uint8_t g_theme_arena[THEME_ARENA_BYTES];
 
 // --- Shared drawing helpers (theme_common.c) ---------------------------------
