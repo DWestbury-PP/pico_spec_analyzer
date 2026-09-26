@@ -1,64 +1,81 @@
 /**
  * @file ili9341.c
- * @brief ILI9341 TFT Display Driver Implementation
+ * @brief ILI9341 driver: register setup plus IRQ-driven indexed-frame streaming.
+ *
+ * Streaming works in 16-row strips. While DMA sends strip s, the IRQ that
+ * started it palette-expands strip s+1 into the other buffer. The CPU cost is
+ * about 50 us per 1.3 ms strip, and the SPI never idles for longer than IRQ entry.
  */
 
 #include "display/ili9341.h"
 #include "config.h"
+#include "platform.h"
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
+#include "hardware/dma.h"
+#include "hardware/irq.h"
 #include <string.h>
 
-// ============================================================================
-// Private State
-// ============================================================================
+#define NSTRIPS        (DISPLAY_HEIGHT / ILI9341_STRIP_H)
+#define STRIP_PIXELS   (DISPLAY_WIDTH * ILI9341_STRIP_H)
+#define READ_HZ        (6 * 1000 * 1000)   // RAMRD read cycle is 150 ns min
 
 static uint16_t _width = ILI9341_TFTWIDTH;
 static uint16_t _height = ILI9341_TFTHEIGHT;
-static uint8_t _rotation = 0;
+static uint32_t _stream_hz;
+
+static uint16_t _strip_buf[2][STRIP_PIXELS];
+static const uint8_t *_fb;
+static const uint16_t *_pal;
+static volatile int _strip;
+static volatile bool _busy;
+static int _dma_ch = -1;
 
 // ============================================================================
-// Low-Level SPI Communication
+// Low-level SPI
 // ============================================================================
 
-/**
- * @brief Write command byte to display
- */
-static inline void write_command(uint8_t cmd) {
-    gpio_put(DISPLAY_PIN_DC, 0);  // Command mode
-    gpio_put(DISPLAY_PIN_CS, 0);  // Select display
+static inline void cs(bool level) { gpio_put(DISPLAY_PIN_CS, level); }
+static inline void dc(bool level) { gpio_put(DISPLAY_PIN_DC, level); }
+
+static void write_command(uint8_t cmd) {
+    dc(0); cs(0);
     spi_write_blocking(DISPLAY_SPI_PORT, &cmd, 1);
-    gpio_put(DISPLAY_PIN_CS, 1);  // Deselect
+    cs(1);
 }
 
-/**
- * @brief Write single data byte to display
- */
-static inline void write_data(uint8_t data) {
-    gpio_put(DISPLAY_PIN_DC, 1);  // Data mode
-    gpio_put(DISPLAY_PIN_CS, 0);  // Select display
-    spi_write_blocking(DISPLAY_SPI_PORT, &data, 1);
-    gpio_put(DISPLAY_PIN_CS, 1);  // Deselect
-}
-
-/**
- * @brief Write multiple data bytes to display
- */
-static inline void write_data_buf(const uint8_t *buf, size_t len) {
-    gpio_put(DISPLAY_PIN_DC, 1);  // Data mode
-    gpio_put(DISPLAY_PIN_CS, 0);  // Select display
+static void write_data_buf(const uint8_t *buf, size_t len) {
+    dc(1); cs(0);
     spi_write_blocking(DISPLAY_SPI_PORT, buf, len);
-    gpio_put(DISPLAY_PIN_CS, 1);  // Deselect
+    cs(1);
 }
 
-/**
- * @brief Write command with data bytes
- */
 static void write_command_data(uint8_t cmd, const uint8_t *data, size_t len) {
     write_command(cmd);
-    if (len > 0) {
-        write_data_buf(data, len);
-    }
+    if (len) write_data_buf(data, len);
+}
+
+static void set_addr_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
+    uint8_t ca[4] = { x0 >> 8, x0 & 0xFF, x1 >> 8, x1 & 0xFF };
+    uint8_t pa[4] = { y0 >> 8, y0 & 0xFF, y1 >> 8, y1 & 0xFF };
+    write_command_data(ILI9341_CASET, ca, 4);
+    write_command_data(ILI9341_PASET, pa, 4);
+    write_command(ILI9341_RAMWR);
+}
+
+/**
+ * SPI mode 3: the PL022 inserts an idle gap between words when CPHA = 0, but
+ * streams back-to-back when CPHA = 1. The ILI9341 samples on the rising edge
+ * in both mode 0 and mode 3.
+ */
+static void spi_16bit(bool on) {
+    spi_set_format(DISPLAY_SPI_PORT, on ? 16 : 8, SPI_CPOL_1, SPI_CPHA_1, SPI_MSB_FIRST);
+}
+
+/** Discard RX data left behind by TX-only transfers and clear the overrun flag. */
+static void spi_drain_rx(void) {
+    while (spi_is_readable(DISPLAY_SPI_PORT)) (void)spi_get_hw(DISPLAY_SPI_PORT)->dr;
+    spi_get_hw(DISPLAY_SPI_PORT)->icr = SPI_SSPICR_RORIC_BITS;
 }
 
 // ============================================================================
@@ -66,298 +83,216 @@ static void write_command_data(uint8_t cmd, const uint8_t *data, size_t len) {
 // ============================================================================
 
 bool ili9341_init(void) {
-    // Initialize SPI
-    spi_init(DISPLAY_SPI_PORT, DISPLAY_SPI_SPEED);
-    
-    // Set SPI format: 8 bits, SPI mode 0
-    spi_set_format(DISPLAY_SPI_PORT, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
-    
-    // Initialize GPIO pins
+    spi_init(DISPLAY_SPI_PORT, DISPLAY_SPI_INIT_HZ);
+    spi_16bit(false);
+
     gpio_set_function(DISPLAY_PIN_SCK, GPIO_FUNC_SPI);
     gpio_set_function(DISPLAY_PIN_MOSI, GPIO_FUNC_SPI);
-    
-    // CS, DC, and RST are regular GPIO outputs
-    gpio_init(DISPLAY_PIN_CS);
-    gpio_set_dir(DISPLAY_PIN_CS, GPIO_OUT);
-    gpio_put(DISPLAY_PIN_CS, 1);  // Deselect
-    
-    gpio_init(DISPLAY_PIN_DC);
-    gpio_set_dir(DISPLAY_PIN_DC, GPIO_OUT);
-    gpio_put(DISPLAY_PIN_DC, 1);
-    
-    gpio_init(DISPLAY_PIN_RST);
-    gpio_set_dir(DISPLAY_PIN_RST, GPIO_OUT);
-    gpio_put(DISPLAY_PIN_RST, 1);
-    
-    // Optional: Backlight control
-    #ifdef DISPLAY_PIN_BL
-    gpio_init(DISPLAY_PIN_BL);
-    gpio_set_dir(DISPLAY_PIN_BL, GPIO_OUT);
-    gpio_put(DISPLAY_PIN_BL, 1);  // Turn on backlight
-    #endif
-    
-    // Hardware reset
-    gpio_put(DISPLAY_PIN_RST, 1);
-    sleep_ms(5);
-    gpio_put(DISPLAY_PIN_RST, 0);
-    sleep_ms(20);
-    gpio_put(DISPLAY_PIN_RST, 1);
-    sleep_ms(150);
-    
-    // Software reset
+    gpio_set_function(DISPLAY_PIN_MISO, GPIO_FUNC_SPI);
+    // Fast edges for 62.5 MHz over jumper wires
+    gpio_set_drive_strength(DISPLAY_PIN_SCK, GPIO_DRIVE_STRENGTH_12MA);
+    gpio_set_drive_strength(DISPLAY_PIN_MOSI, GPIO_DRIVE_STRENGTH_12MA);
+    gpio_set_slew_rate(DISPLAY_PIN_SCK, GPIO_SLEW_RATE_FAST);
+    gpio_set_slew_rate(DISPLAY_PIN_MOSI, GPIO_SLEW_RATE_FAST);
+
+    gpio_init(DISPLAY_PIN_CS);  gpio_set_dir(DISPLAY_PIN_CS, GPIO_OUT);  cs(1);
+    gpio_init(DISPLAY_PIN_DC);  gpio_set_dir(DISPLAY_PIN_DC, GPIO_OUT);  dc(1);
+    gpio_init(DISPLAY_PIN_RST); gpio_set_dir(DISPLAY_PIN_RST, GPIO_OUT);
+    gpio_init(DISPLAY_PIN_BL);  gpio_set_dir(DISPLAY_PIN_BL, GPIO_OUT);  gpio_put(DISPLAY_PIN_BL, 1);
+
+    gpio_put(DISPLAY_PIN_RST, 1); sleep_ms(5);
+    gpio_put(DISPLAY_PIN_RST, 0); sleep_ms(20);
+    gpio_put(DISPLAY_PIN_RST, 1); sleep_ms(150);
+
     write_command(ILI9341_SWRESET);
     sleep_ms(150);
-    
-    // Power control A
-    write_command_data(0xCB, (const uint8_t[]){0x39, 0x2C, 0x00, 0x34, 0x02}, 5);
-    
-    // Power control B
-    write_command_data(0xCF, (const uint8_t[]){0x00, 0xC1, 0x30}, 3);
-    
-    // Driver timing control A
-    write_command_data(0xE8, (const uint8_t[]){0x85, 0x00, 0x78}, 3);
-    
-    // Driver timing control B
-    write_command_data(0xEA, (const uint8_t[]){0x00, 0x00}, 2);
-    
-    // Power on sequence control
-    write_command_data(0xED, (const uint8_t[]){0x64, 0x03, 0x12, 0x81}, 4);
-    
-    // Pump ratio control
-    write_command_data(0xF7, (const uint8_t[]){0x20}, 1);
-    
-    // Power control 1
+
+    write_command_data(0xCB, (const uint8_t[]){0x39, 0x2C, 0x00, 0x34, 0x02}, 5);  // power control A
+    write_command_data(0xCF, (const uint8_t[]){0x00, 0xC1, 0x30}, 3);              // power control B
+    write_command_data(0xE8, (const uint8_t[]){0x85, 0x00, 0x78}, 3);              // driver timing A
+    write_command_data(0xEA, (const uint8_t[]){0x00, 0x00}, 2);                    // driver timing B
+    write_command_data(0xED, (const uint8_t[]){0x64, 0x03, 0x12, 0x81}, 4);        // power-on sequence
+    write_command_data(0xF7, (const uint8_t[]){0x20}, 1);                          // pump ratio
     write_command_data(ILI9341_PWCTR1, (const uint8_t[]){0x23}, 1);
-    
-    // Power control 2
     write_command_data(ILI9341_PWCTR2, (const uint8_t[]){0x10}, 1);
-    
-    // VCOM control 1
     write_command_data(ILI9341_VMCTR1, (const uint8_t[]){0x3e, 0x28}, 2);
-    
-    // VCOM control 2
     write_command_data(ILI9341_VMCTR2, (const uint8_t[]){0x86}, 1);
-    
-    // Memory access control (rotation)
     write_command_data(ILI9341_MADCTL, (const uint8_t[]){0x48}, 1);
-    
-    // Pixel format: 16-bit color
-    write_command_data(ILI9341_PIXFMT, (const uint8_t[]){0x55}, 1);
-    
-    // Frame rate control
-    write_command_data(ILI9341_FRMCTR1, (const uint8_t[]){0x00, 0x18}, 2);
-    
-    // Display function control
+    write_command_data(ILI9341_PIXFMT, (const uint8_t[]){0x55}, 1);                // 16-bit
+    write_command_data(ILI9341_FRMCTR1, (const uint8_t[]){0x00, 0x18}, 2);         // 79 Hz panel refresh
     write_command_data(ILI9341_DFUNCTR, (const uint8_t[]){0x08, 0x82, 0x27}, 3);
-    
-    // Enable 3 gamma control
-    write_command_data(0xF2, (const uint8_t[]){0x00}, 1);
-    
-    // Gamma curve
+    write_command_data(0xF2, (const uint8_t[]){0x00}, 1);                          // 3-gamma off
     write_command_data(ILI9341_GAMMASET, (const uint8_t[]){0x01}, 1);
-    
-    // Positive gamma correction
     write_command_data(ILI9341_GMCTRP1, (const uint8_t[]){
-        0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E, 0xF1,
-        0x37, 0x07, 0x10, 0x03, 0x0E, 0x09, 0x00
-    }, 15);
-    
-    // Negative gamma correction
+        0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E, 0xF1, 0x37, 0x07, 0x10, 0x03, 0x0E, 0x09, 0x00}, 15);
     write_command_data(ILI9341_GMCTRN1, (const uint8_t[]){
-        0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31, 0xC1,
-        0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36, 0x0F
-    }, 15);
-    
-    // Sleep out
+        0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31, 0xC1, 0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36, 0x0F}, 15);
+
     write_command(ILI9341_SLPOUT);
     sleep_ms(120);
-    
-    // Display on
     write_command(ILI9341_DISPON);
     sleep_ms(20);
-    
-    DEBUG_PRINTF("ILI9341 initialized\n");
+
+    _stream_hz = spi_set_baudrate(DISPLAY_SPI_PORT, DISPLAY_SPI_STREAM_HZ);
     return true;
 }
 
-// ============================================================================
-// Configuration
-// ============================================================================
-
 void ili9341_set_rotation(uint8_t rotation) {
-    _rotation = rotation % 4;
-    
-    uint8_t madctl = 0;
-    
-    switch (_rotation) {
-        case ILI9341_ROTATION_0:
-            madctl = 0x48;  // MX, BGR
-            _width = ILI9341_TFTWIDTH;
-            _height = ILI9341_TFTHEIGHT;
-            break;
-        case ILI9341_ROTATION_90:
-            madctl = 0x28;  // MV, BGR
-            _width = ILI9341_TFTHEIGHT;
-            _height = ILI9341_TFTWIDTH;
-            break;
-        case ILI9341_ROTATION_180:
-            madctl = 0x88;  // MY, BGR
-            _width = ILI9341_TFTWIDTH;
-            _height = ILI9341_TFTHEIGHT;
-            break;
-        case ILI9341_ROTATION_270:
-            madctl = 0xE8;  // MX, MY, MV, BGR
-            _width = ILI9341_TFTHEIGHT;
-            _height = ILI9341_TFTWIDTH;
-            break;
-    }
-    
-    write_command_data(ILI9341_MADCTL, &madctl, 1);
-}
-
-// ============================================================================
-// Drawing Functions
-// ============================================================================
-
-void ili9341_set_addr_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
-    write_command(ILI9341_CASET);  // Column address set
-    write_data(x0 >> 8);
-    write_data(x0 & 0xFF);
-    write_data(x1 >> 8);
-    write_data(x1 & 0xFF);
-    
-    write_command(ILI9341_PASET);  // Page address set
-    write_data(y0 >> 8);
-    write_data(y0 & 0xFF);
-    write_data(y1 >> 8);
-    write_data(y1 & 0xFF);
-    
-    write_command(ILI9341_RAMWR);  // Memory write
-}
-
-void ili9341_begin_write(void) {
-    gpio_put(DISPLAY_PIN_DC, 1);  // Data mode
-    gpio_put(DISPLAY_PIN_CS, 0);  // Select display
-}
-
-void ili9341_write_pixel(uint16_t color) {
-    uint8_t buf[2] = {color >> 8, color & 0xFF};
-    spi_write_blocking(DISPLAY_SPI_PORT, buf, 2);
-}
-
-void ili9341_end_write(void) {
-    gpio_put(DISPLAY_PIN_CS, 1);  // Deselect display
+    static const uint8_t madctl[4] = { 0x48, 0x28, 0x88, 0xE8 };
+    rotation &= 3;
+    bool landscape = rotation & 1;
+    _width = landscape ? ILI9341_TFTHEIGHT : ILI9341_TFTWIDTH;
+    _height = landscape ? ILI9341_TFTWIDTH : ILI9341_TFTHEIGHT;
+    write_command_data(ILI9341_MADCTL, &madctl[rotation], 1);
 }
 
 void ili9341_fill_screen(uint16_t color) {
-    ili9341_fill_rect(0, 0, _width, _height, color);
-}
-
-void ili9341_draw_pixel(int16_t x, int16_t y, uint16_t color) {
-    if ((x < 0) || (x >= _width) || (y < 0) || (y >= _height)) return;
-    
-    ili9341_set_addr_window(x, y, x, y);
-    ili9341_begin_write();
-    ili9341_write_pixel(color);
-    ili9341_end_write();
-}
-
-void ili9341_fill_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
-    if ((x >= _width) || (y >= _height)) return;
-    if ((x + w - 1) >= _width) w = _width - x;
-    if ((y + h - 1) >= _height) h = _height - y;
-    
-    ili9341_set_addr_window(x, y, x + w - 1, y + h - 1);
-    
-    uint8_t hi = color >> 8;
-    uint8_t lo = color & 0xFF;
-    
-    ili9341_begin_write();
-    for (int32_t i = (int32_t)w * h; i > 0; i--) {
-        uint8_t buf[2] = {hi, lo};
-        spi_write_blocking(DISPLAY_SPI_PORT, buf, 2);
+    set_addr_window(0, 0, _width - 1, _height - 1);
+    dc(1); cs(0);
+    spi_16bit(true);
+    for (uint32_t i = 0; i < (uint32_t)_width * _height; i++) {
+        spi_write16_blocking(DISPLAY_SPI_PORT, &color, 1);
     }
-    ili9341_end_write();
+    while (spi_is_busy(DISPLAY_SPI_PORT)) tight_loop_contents();
+    spi_16bit(false);
+    spi_drain_rx();
+    cs(1);
 }
 
-void ili9341_draw_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
-    // Draw four lines to make a rectangle
-    // Top
-    ili9341_fill_rect(x, y, w, 1, color);
-    // Bottom
-    ili9341_fill_rect(x, y + h - 1, w, 1, color);
-    // Left
-    ili9341_fill_rect(x, y, 1, h, color);
-    // Right
-    ili9341_fill_rect(x + w - 1, y, 1, h, color);
+uint16_t ili9341_width(void)  { return _width; }
+uint16_t ili9341_height(void) { return _height; }
+uint32_t ili9341_stream_hz(void) { return _stream_hz; }
+
+// ============================================================================
+// Readback
+// ============================================================================
+
+uint8_t ili9341_read_reg(uint8_t reg, uint8_t index) {
+    spi_set_baudrate(DISPLAY_SPI_PORT, READ_HZ);
+    uint8_t idx = 0x10 + index;
+    write_command_data(0xD9, &idx, 1);
+    uint8_t v = 0;
+    dc(0); cs(0);
+    spi_write_blocking(DISPLAY_SPI_PORT, &reg, 1);
+    dc(1);
+    spi_read_blocking(DISPLAY_SPI_PORT, 0x00, &v, 1);
+    cs(1);
+    spi_set_baudrate(DISPLAY_SPI_PORT, _stream_hz);
+    return v;
 }
 
-// ============================================================================
-// Test Pattern
-// ============================================================================
-
-void ili9341_test_pattern(void) {
-    DEBUG_PRINTF("Running display test pattern...\n");
-    
-    // Fill screen with different colors
-    DEBUG_PRINTF("  Red...\n");
-    ili9341_fill_screen(ILI9341_RED);
-    sleep_ms(500);
-    
-    DEBUG_PRINTF("  Green...\n");
-    ili9341_fill_screen(ILI9341_GREEN);
-    sleep_ms(500);
-    
-    DEBUG_PRINTF("  Blue...\n");
-    ili9341_fill_screen(ILI9341_BLUE);
-    sleep_ms(500);
-    
-    DEBUG_PRINTF("  White...\n");
-    ili9341_fill_screen(ILI9341_WHITE);
-    sleep_ms(500);
-    
-    DEBUG_PRINTF("  Black...\n");
-    ili9341_fill_screen(ILI9341_BLACK);
-    sleep_ms(500);
-    
-    // Draw colored rectangles
-    DEBUG_PRINTF("  Color bars...\n");
-    uint16_t colors[] = {
-        ILI9341_RED, ILI9341_YELLOW, ILI9341_GREEN, ILI9341_CYAN,
-        ILI9341_BLUE, ILI9341_MAGENTA, ILI9341_WHITE, ILI9341_BLACK
-    };
-    
-    int bar_width = _width / 8;
-    for (int i = 0; i < 8; i++) {
-        ili9341_fill_rect(i * bar_width, 0, bar_width, _height, colors[i]);
+int ili9341_selftest(void) {
+    enum { W = 64, H = 16, N = W * H };
+    static uint16_t pat[N];
+    static uint8_t rd[1 + 3 * N];
+    uint32_t seed = 0x1234567u;
+    for (int i = 0; i < N; i++) {
+        seed = seed * 1664525u + 1013904223u;
+        uint16_t v5 = (seed >> 11) & 0x1F, g6 = (seed >> 20) & 0x3F;
+        pat[i] = (uint16_t)((v5 << 11) | (g6 << 5) | v5);   // R == B: immune to BGR order
     }
-    sleep_ms(2000);
-    
-    // Clear to black
-    ili9341_fill_screen(ILI9341_BLACK);
-    
-    // Draw some test rectangles
-    DEBUG_PRINTF("  Test rectangles...\n");
-    ili9341_fill_rect(10, 10, 60, 40, ILI9341_RED);
-    ili9341_fill_rect(80, 20, 60, 40, ILI9341_GREEN);
-    ili9341_fill_rect(150, 30, 60, 40, ILI9341_BLUE);
-    
-    ili9341_draw_rect(10, 100, 100, 80, ILI9341_YELLOW);
-    ili9341_draw_rect(120, 110, 100, 80, ILI9341_CYAN);
-    ili9341_draw_rect(230, 120, 80, 80, ILI9341_MAGENTA);
-    
-    DEBUG_PRINTF("Test pattern complete!\n");
+
+    // Write at streaming speed
+    set_addr_window(0, 0, W - 1, H - 1);
+    dc(1); cs(0);
+    spi_16bit(true);
+    spi_write16_blocking(DISPLAY_SPI_PORT, pat, N);
+    while (spi_is_busy(DISPLAY_SPI_PORT)) tight_loop_contents();
+    spi_16bit(false);
+    spi_drain_rx();
+    cs(1);
+
+    // Read back slowly
+    spi_set_baudrate(DISPLAY_SPI_PORT, READ_HZ);
+    uint8_t ca[4] = { 0, 0, 0, W - 1 }, pa[4] = { 0, 0, 0, H - 1 };
+    write_command_data(ILI9341_CASET, ca, 4);
+    write_command_data(ILI9341_PASET, pa, 4);
+    uint8_t cmd = ILI9341_RAMRD;
+    dc(0); cs(0);
+    spi_write_blocking(DISPLAY_SPI_PORT, &cmd, 1);
+    dc(1);
+    spi_read_blocking(DISPLAY_SPI_PORT, 0x00, rd, sizeof(rd));
+    cs(1);
+    spi_set_baudrate(DISPLAY_SPI_PORT, _stream_hz);
+
+    bool all_same = true;
+    for (size_t i = 2; i < sizeof(rd); i++) if (rd[i] != rd[1]) { all_same = false; break; }
+    if (all_same) return -1;
+
+    int bad = 0;
+    for (int i = 0; i < N; i++) {
+        const uint8_t *p = &rd[1 + 3 * i];
+        uint16_t v5 = pat[i] >> 11, g6 = (pat[i] >> 5) & 0x3F;
+        if ((p[0] >> 3) != v5 || (p[1] >> 2) != g6 || (p[2] >> 3) != v5) bad++;
+    }
+    return bad;
 }
 
 // ============================================================================
-// Getters
+// Streaming
 // ============================================================================
 
-uint16_t ili9341_width(void) {
-    return _width;
+static void RAMFUNC(convert_strip)(int s, uint16_t *dst) {
+    const uint32_t *src = (const uint32_t *)(_fb + s * STRIP_PIXELS);
+    const uint16_t *pal = _pal;
+    for (int n = STRIP_PIXELS / 4; n; n--) {
+        uint32_t w = *src++;
+        dst[0] = pal[w & 0xFF];
+        dst[1] = pal[(w >> 8) & 0xFF];
+        dst[2] = pal[(w >> 16) & 0xFF];
+        dst[3] = pal[w >> 24];
+        dst += 4;
+    }
 }
 
-uint16_t ili9341_height(void) {
-    return _height;
+static void RAMFUNC(stream_irq)(void) {
+    dma_hw->ints1 = 1u << _dma_ch;
+    int s = _strip + 1;
+    if (s < NSTRIPS) {
+        _strip = s;
+        dma_channel_transfer_from_buffer_now(_dma_ch, _strip_buf[s & 1], STRIP_PIXELS);
+        if (s + 1 < NSTRIPS) convert_strip(s + 1, _strip_buf[(s + 1) & 1]);
+    } else {
+        _busy = false;
+    }
 }
 
+void ili9341_stream_init(void) {
+    _dma_ch = dma_claim_unused_channel(true);
+    dma_channel_config c = dma_channel_get_default_config(_dma_ch);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_16);
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, false);
+    channel_config_set_dreq(&c, spi_get_dreq(DISPLAY_SPI_PORT, true));
+    dma_channel_configure(_dma_ch, &c, &spi_get_hw(DISPLAY_SPI_PORT)->dr, NULL, STRIP_PIXELS, false);
+
+    dma_channel_set_irq1_enabled(_dma_ch, true);
+    irq_set_exclusive_handler(DMA_IRQ_1, stream_irq);
+    irq_set_enabled(DMA_IRQ_1, true);
+}
+
+void ili9341_stream_begin(const uint8_t *fb, const uint16_t *palette) {
+    _fb = fb;
+    _pal = palette;
+    set_addr_window(0, 0, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 1);
+    dc(1); cs(0);
+    spi_16bit(true);
+
+    _busy = true;
+    _strip = 0;
+    convert_strip(0, _strip_buf[0]);
+    dma_channel_transfer_from_buffer_now(_dma_ch, _strip_buf[0], STRIP_PIXELS);
+    convert_strip(1, _strip_buf[1]);
+}
+
+bool ili9341_stream_busy(void) {
+    return _busy;
+}
+
+void ili9341_stream_wait(void) {
+    while (_busy) tight_loop_contents();
+    while (spi_is_busy(DISPLAY_SPI_PORT)) tight_loop_contents();
+    cs(1);
+    spi_16bit(false);
+    spi_drain_rx();
+}

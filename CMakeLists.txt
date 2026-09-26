@@ -33,40 +33,29 @@ endif()
 # ============================================================================
 
 set(SOURCES
-    # Real spectrum analyzer (active)
-    src/spectrum_analyzer.c
-    
-    # Display driver and themes
+    src/main.c
+    src/core/shared.c
+    src/core/crash.c
+
+    # Core 0: audio capture + analysis (dsp.c and fft_q.c are also host-tested)
+    src/audio/audio_task.c
+    src/audio/dsp.c
+    src/audio/fft_q.c
+
+    # Core 1: rendering
     src/display/ili9341.c
-    src/display/theme_manager.c
+    src/display/gfx.c
+    src/display/font/font5x7.c
+    src/display/renderer.c
+    src/display/themes/theme_common.c
     src/display/themes/bars.c
+    src/display/themes/rta.c
     src/display/themes/waterfall.c
+    src/display/themes/terrain.c
     src/display/themes/radial.c
-    src/display/themes/mirror.c
-    
-    # Touch controller
+    src/display/themes/scope.c
+
     src/touch/xpt2046.c
-    
-    # Audio processing
-    src/audio/adc_sampler.c
-    src/audio/fft_processor.c
-    
-    # Optional test/development modules (comment out for release)
-    # src/spectrum_viz_test.c
-    # src/utils/mock_audio.c
-    # src/display_test.c
-    # src/main.c
-    # src/main_simple_test.c
-)
-
-# ============================================================================
-# PIO Programs
-# ============================================================================
-
-# Generate PIO headers from .pio files
-# The pico_generate_pio_header function compiles .pio assembly into C headers
-set(PIO_SOURCES
-    # pio/adc_sampler.pio  # To be added
 )
 
 # ============================================================================
@@ -77,32 +66,30 @@ add_executable(${PROJECT_NAME}
     ${SOURCES}
 )
 
-# Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/include
-    ${CMAKE_CURRENT_LIST_DIR}/include/audio
-    ${CMAKE_CURRENT_LIST_DIR}/include/display
-    ${CMAKE_CURRENT_LIST_DIR}/include/touch
-    ${CMAKE_CURRENT_LIST_DIR}/include/utils
 )
 
-# Link Pico SDK libraries
 target_link_libraries(${PROJECT_NAME}
-    pico_stdlib              # Standard library (stdio, time, etc.)
-    hardware_gpio            # GPIO control
-    pico_multicore           # Dual-core support
-    hardware_adc             # ADC for audio input
-    hardware_spi             # SPI for display and touch
-    hardware_dma             # DMA for efficient transfers
-    hardware_pio             # PIO for custom peripherals
-    hardware_pwm             # PWM (if needed for backlight)
-    pico_binary_info         # Binary metadata for picotool
+    pico_stdlib
+    pico_multicore
+    hardware_adc
+    hardware_clocks
+    hardware_dma
+    hardware_exception
+    hardware_irq
+    hardware_spi
+    hardware_sync
+    hardware_vreg
+    hardware_watchdog
 )
 
-# Generate PIO headers
-# foreach(PIO_FILE ${PIO_SOURCES})
-#     pico_generate_pio_header(${PROJECT_NAME} ${CMAKE_CURRENT_LIST_DIR}/${PIO_FILE})
-# endforeach()
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    # Keep clk_peri on clk_sys after overclocking so SPI can reach 62.5 MHz
+    PICO_CLOCK_ADJUST_PERI_CLOCK_WITH_SYS_CLOCK=1
+    # Core 1 gets the whole 4 KB scratch_x bank (printf with floats is stack-hungry)
+    PICO_CORE1_STACK_SIZE=0x1000
+)
 
 # ============================================================================
 # Output Formats
@@ -111,28 +98,9 @@ target_link_libraries(${PROJECT_NAME}
 # Generate UF2 file for drag-and-drop programming
 pico_add_extra_outputs(${PROJECT_NAME})
 
-# Enable USB serial output (comment out to use UART instead)
+# USB CDC serial for stats and commands (UART pins stay free)
 pico_enable_stdio_usb(${PROJECT_NAME} 1)
-pico_enable_stdio_uart(${PROJECT_NAME} 1)
-
-# ============================================================================
-# CMSIS-DSP Library (for FFT)
-# ============================================================================
-
-# TODO: Add CMSIS-DSP as a submodule and link it here
-# For now, this is a placeholder
-# add_subdirectory(lib/CMSIS-DSP)
-# target_link_libraries(${PROJECT_NAME} CMSISDSP)
-
-# ============================================================================
-# Build Information
-# ============================================================================
-
-# Add compile definitions
-target_compile_definitions(${PROJECT_NAME} PRIVATE
-    # PICO_BOARD is set via CMake command line
-    # Add custom defines here
-)
+pico_enable_stdio_uart(${PROJECT_NAME} 0)
 
 # Print build configuration
 message(STATUS "")
@@ -144,16 +112,3 @@ message(STATUS "C Compiler: ${CMAKE_C_COMPILER}")
 message(STATUS "Pico SDK: $ENV{PICO_SDK_PATH}")
 message(STATUS "==================================================")
 message(STATUS "")
-
-# ============================================================================
-# Testing (Optional)
-# ============================================================================
-
-option(BUILD_TESTS "Build unit tests" OFF)
-
-if(BUILD_TESTS)
-    enable_testing()
-    # add_subdirectory(tests)
-    message(STATUS "Unit tests enabled")
-endif()
-
