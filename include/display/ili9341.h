@@ -99,93 +99,53 @@
 // Public API
 // ============================================================================
 
-/**
- * @brief Initialize ILI9341 display
- * @return true if successful, false on error
- */
+/** Reset and configure the panel (landscape, RGB565). */
 bool ili9341_init(void);
 
-/**
- * @brief Set display rotation
- * @param rotation Rotation value (0-3)
- */
 void ili9341_set_rotation(uint8_t rotation);
-
-/**
- * @brief Fill entire screen with single color
- * @param color RGB565 color value
- */
 void ili9341_fill_screen(uint16_t color);
-
-/**
- * @brief Draw a single pixel
- * @param x X coordinate
- * @param y Y coordinate
- * @param color RGB565 color value
- */
-void ili9341_draw_pixel(int16_t x, int16_t y, uint16_t color);
-
-/**
- * @brief Draw a filled rectangle
- * @param x X coordinate of top-left corner
- * @param y Y coordinate of top-left corner
- * @param w Width
- * @param h Height
- * @param color RGB565 color value
- */
-void ili9341_fill_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
-
-/**
- * @brief Draw a rectangle outline
- * @param x X coordinate of top-left corner
- * @param y Y coordinate of top-left corner
- * @param w Width
- * @param h Height
- * @param color RGB565 color value
- */
-void ili9341_draw_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
-
-/**
- * @brief Set address window for bulk pixel writing
- * @param x0 Start X coordinate
- * @param y0 Start Y coordinate
- * @param x1 End X coordinate
- * @param y1 End Y coordinate
- */
-void ili9341_set_addr_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
-
-/**
- * @brief Begin writing pixel data (call after set_addr_window)
- */
-void ili9341_begin_write(void);
-
-/**
- * @brief Write a single pixel value (16-bit color)
- * @param color RGB565 color value
- */
-void ili9341_write_pixel(uint16_t color);
-
-/**
- * @brief End pixel data write
- */
-void ili9341_end_write(void);
-
-/**
- * @brief Run display test pattern
- */
-void ili9341_test_pattern(void);
-
-/**
- * @brief Get current display width (accounts for rotation)
- * @return Width in pixels
- */
 uint16_t ili9341_width(void);
-
-/**
- * @brief Get current display height (accounts for rotation)
- * @return Height in pixels
- */
 uint16_t ili9341_height(void);
 
-#endif // ILI9341_H
+/**
+ * Read a register over MISO (at a safe clock). Returns 0xFF/0x00-only results
+ * if MISO is not wired. Uses the 0xD9 index trick for multi-byte registers.
+ */
+uint8_t ili9341_read_reg(uint8_t reg, uint8_t index);
 
+/**
+ * Signal-integrity check: write a pseudo-random block at the streaming clock,
+ * read it back slowly over MISO, and count mismatched pixels.
+ * Returns -1 if readback is unavailable (MISO not connected).
+ */
+int ili9341_selftest(void);
+
+/** Actual SPI clock used for streaming (Hz). */
+uint32_t ili9341_stream_hz(void);
+
+// --- Full-frame streaming from an 8-bit indexed framebuffer ---------------
+
+#define ILI9341_STRIP_H 8
+
+/**
+ * Install the DMA completion IRQ on the calling core. Call on the core that
+ * will own streaming.
+ */
+void ili9341_stream_init(void);
+
+/**
+ * Start streaming a 320x240 indexed frame. Returns immediately; strips are
+ * palette-expanded and sent from the DMA IRQ. fb and palette must not change
+ * until ili9341_stream_wait() returns.
+ */
+void ili9341_stream_begin(const uint8_t *fb, const uint16_t *palette);
+
+bool ili9341_stream_busy(void);
+
+/** time_us_64() at which the last strip left the DMA (end of the previous stream). */
+uint64_t ili9341_stream_done_us(void);
+
+/** Block until the frame is on the panel and the bus is released. */
+void ili9341_stream_wait(void);
+
+#endif // ILI9341_H

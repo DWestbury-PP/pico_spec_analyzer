@@ -1,176 +1,131 @@
 /**
  * @file radial.c
- * @brief Radial spectrum visualization implementation
- * 
- * Displays frequency bands as bars arranged in a circle radiating from center.
+ * @brief "Nova": 96 mirrored spokes on a rotating ring, hue by frequency,
+ *        motion trails via palette-index fading, bass-pulsed core and
+ *        beat-triggered shockwaves.
+ *
+ * Each frame starts from the previous one and remaps every pixel one
+ * brightness step down inside its hue, so spokes leave fading trails as the
+ * ring spins.
  */
 
-#include "display/themes/radial.h"
-#include "display/ili9341.h"
-#include "config.h"
+#include "display/theme.h"
+#include "display/gfx.h"
+#include "platform.h"
 #include <math.h>
 #include <string.h>
 
-// ============================================================================
-// Configuration
-// ============================================================================
+#define HUES        11
+#define BRIGHT      10                    // idx = 1 + hue*10 + b  (1..110)
+#define CORE_FIRST  111
+#define CORE_N      9
+#define NSPOKE      48                    // per half
+#define CX          (FB_W / 2)
+#define CY          (FB_H / 2)
+#define R_MAX       116
 
-#define MAX_BANDS 32
-#define CENTER_X (DISPLAY_WIDTH / 2)
-#define CENTER_Y (DISPLAY_HEIGHT / 2)
-#define MIN_RADIUS 30    // Inner circle radius
-#define MAX_RADIUS 110   // Maximum bar length
+static uint8_t _fade[256];
+static float _rot, _bass, _bass_avg, _cool;
+static float _shock_r;
+static bool _shock;
 
-// ============================================================================
-// Private State
-// ============================================================================
-
-static float _prev_bands[MAX_BANDS];
-static uint8_t _num_bands = 0;
-
-// ============================================================================
-// Color Mapping
-// ============================================================================
-
-/**
- * @brief Convert amplitude to color
- */
-static uint16_t amplitude_to_color(float amplitude) {
-    if (amplitude < 0.0f) amplitude = 0.0f;
-    if (amplitude > 1.0f) amplitude = 1.0f;
-    
-    // Color gradient: Blue → Cyan → Green → Yellow → Red
-    if (amplitude < 0.25f) {
-        // Blue to Cyan
-        float t = amplitude / 0.25f;
-        uint8_t g = (uint8_t)(t * 255.0f);
-        return RGB565(0, g, 255);
-    } else if (amplitude < 0.5f) {
-        // Cyan to Green
-        float t = (amplitude - 0.25f) / 0.25f;
-        uint8_t b = (uint8_t)((1.0f - t) * 255.0f);
-        return RGB565(0, 255, b);
-    } else if (amplitude < 0.75f) {
-        // Green to Yellow
-        float t = (amplitude - 0.5f) / 0.25f;
-        uint8_t r = (uint8_t)(t * 255.0f);
-        return RGB565(r, 255, 0);
-    } else {
-        // Yellow to Red
-        float t = (amplitude - 0.75f) / 0.25f;
-        uint8_t g = (uint8_t)((1.0f - t) * 255.0f);
-        return RGB565(255, g, 0);
+static uint32_t hsv(float h, float s, float v) {
+    float r, g, b;
+    int i = (int)(h * 6.0f);
+    float f = h * 6.0f - i, p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s);
+    switch (i % 6) {
+        case 0: r = v; g = t; b = p; break;
+        case 1: r = q; g = v; b = p; break;
+        case 2: r = p; g = v; b = t; break;
+        case 3: r = p; g = q; b = v; break;
+        case 4: r = t; g = p; b = v; break;
+        default: r = v; g = p; b = q; break;
     }
+    return ((uint32_t)(r * 255) << 16) | ((uint32_t)(g * 255) << 8) | (uint32_t)(b * 255);
 }
 
-// ============================================================================
-// Drawing Helpers
-// ============================================================================
-
-/**
- * @brief Draw a line using Bresenham's algorithm
- */
-static void draw_line(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color) {
-    int16_t dx = abs(x1 - x0);
-    int16_t dy = abs(y1 - y0);
-    int16_t sx = (x0 < x1) ? 1 : -1;
-    int16_t sy = (y0 < y1) ? 1 : -1;
-    int16_t err = dx - dy;
-    
-    while (1) {
-        // Draw pixel (with bounds checking)
-        if (x0 >= 0 && x0 < DISPLAY_WIDTH && y0 >= 0 && y0 < DISPLAY_HEIGHT) {
-            ili9341_draw_pixel(x0, y0, color);
-        }
-        
-        if (x0 == x1 && y0 == y1) break;
-        
-        int16_t e2 = 2 * err;
-        if (e2 > -dy) {
-            err -= dy;
-            x0 += sx;
-        }
-        if (e2 < dx) {
-            err += dx;
-            y0 += sy;
+static void enter(void) {
+    for (int h = 0; h < HUES; h++) {
+        uint32_t c = hsv(0.62f - 0.62f * h / (HUES - 1), 0.85f, 1.0f);   // bass blue .. treble red
+        if (h == HUES - 1) c = 0xFFF0F6;      // top hue doubles as the shockwave white
+        for (int b = 0; b < BRIGHT; b++) {
+            float k = (b + 1) / (float)BRIGHT;
+            gfx_set_color((uint8_t)(1 + h * BRIGHT + b), gfx_scale_rgb(c, k * k));
         }
     }
+    static const uint32_t core[] = { 0x1A0630, 0x5B1A8A, 0xC23BD4, 0xFF9CF0, 0xFFFFFF };
+    gfx_ramp(CORE_FIRST, CORE_N, core, 5);
+
+    memset(_fade, 0, sizeof(_fade));
+    for (int i = 1; i <= HUES * BRIGHT; i++) {
+        int b = (i - 1) % BRIGHT;
+        _fade[i] = b > 0 ? (uint8_t)(i - 1) : 0;
+    }
+    gfx_clear(0);
+    _rot = 0.0f;
+    _shock = false;
 }
 
-/**
- * @brief Draw a thick line (multiple parallel lines)
- */
-static void draw_thick_line(int16_t x0, int16_t y0, int16_t x1, int16_t y1, 
-                            uint16_t color, uint8_t thickness) {
-    for (int8_t offset = -(thickness/2); offset <= thickness/2; offset++) {
-        // Calculate perpendicular offset
-        float angle = atan2f(y1 - y0, x1 - x0);
-        float perp_angle = angle + M_PI / 2.0f;
-        int16_t dx = (int16_t)(offset * cosf(perp_angle));
-        int16_t dy = (int16_t)(offset * sinf(perp_angle));
-        
-        draw_line(x0 + dx, y0 + dy, x1 + dx, y1 + dy, color);
+static void update(const spectrum_frame_t *f, float dt) {
+    float loud = f->loud / (float)LEVEL_MAX;
+    _rot += dt * (0.15f + 1.1f * loud);
+    float b = f->bass / (float)LEVEL_MAX;
+    _bass += (b - _bass) * (dt * 20.0f > 1.0f ? 1.0f : dt * 20.0f);
+    _bass_avg += (b - _bass_avg) * dt * 1.5f;
+    _cool -= dt;
+    if (!_shock && _cool <= 0.0f && b > 0.35f && b > _bass_avg * 1.25f) {
+        _shock = true;
+        _shock_r = 30.0f;
+        _cool = 0.3f;
+    }
+    if (_shock) {
+        _shock_r += 330.0f * dt;
+        if (_shock_r > 200.0f) _shock = false;
     }
 }
 
-// ============================================================================
-// Public API
-// ============================================================================
-
-void radial_init(void) {
-    memset(_prev_bands, 0, sizeof(_prev_bands));
-    _num_bands = 0;
+static void spoke(float ang, float r0, float r1, uint8_t idx) {
+    float c = cosf(ang), s = sinf(ang);
+    int x0 = CX + (int)(r0 * c), y0 = CY + (int)(r0 * s);
+    int x1 = CX + (int)(r1 * c), y1 = CY + (int)(r1 * s);
+    gfx_line(x0, y0, x1, y1, idx);
+    // Second line offset along the perpendicular for a 2 px stroke
+    int ox = (int)lroundf(-s), oy = (int)lroundf(c);
+    gfx_line(x0 + ox, y0 + oy, x1 + ox, y1 + oy, idx);
 }
 
-void radial_render(const float *bands, uint8_t num_bands) {
-    if (!bands || num_bands == 0 || num_bands > MAX_BANDS) return;
-    
-    _num_bands = num_bands;
-    
-    // Clear screen
-    ili9341_fill_screen(ILI9341_BLACK);
-    
-    // Draw center circle
-    for (int16_t r = MIN_RADIUS - 2; r <= MIN_RADIUS; r++) {
-        for (int16_t angle = 0; angle < 360; angle += 2) {
-            float rad = angle * M_PI / 180.0f;
-            int16_t x = CENTER_X + (int16_t)(r * cosf(rad));
-            int16_t y = CENTER_Y + (int16_t)(r * sinf(rad));
-            if (x >= 0 && x < DISPLAY_WIDTH && y >= 0 && y < DISPLAY_HEIGHT) {
-                ili9341_draw_pixel(x, y, RGB565(50, 50, 50));
-            }
-        }
+static void RAMFUNC(draw)(const spectrum_frame_t *f) {
+    gfx_copy_front();
+    gfx_remap(_fade);
+
+    const float r0 = 24.0f + _bass * 20.0f;
+    for (int j = 0; j < NSPOKE; j++) {
+        uint32_t lv = 0;
+        for (int c = j * SPEC_COLS / NSPOKE; c < (j + 1) * SPEC_COLS / NSPOKE; c++)
+            if (f->level[c] > lv) lv = f->level[c];
+        float len = (float)lv / LEVEL_MAX * (R_MAX - r0);
+        if (len < 1.0f) continue;
+        uint8_t idx = (uint8_t)(1 + (j * (HUES - 1) / NSPOKE) * BRIGHT + BRIGHT - 1);
+        float a = (j + 0.5f) * (float)M_PI / NSPOKE;
+        spoke(-(float)M_PI / 2 + a + _rot, r0, r0 + len, idx);
+        spoke(-(float)M_PI / 2 - a + _rot, r0, r0 + len, idx);
     }
-    
-    // Draw each frequency band as a bar radiating from center
-    for (uint8_t i = 0; i < num_bands; i++) {
-        // Smooth transition
-        float smoothed = _prev_bands[i] * 0.7f + bands[i] * 0.3f;
-        _prev_bands[i] = smoothed;
-        
-        // Calculate angle for this band
-        float angle = (360.0f * i / num_bands) * M_PI / 180.0f;
-        
-        // Calculate bar length
-        float bar_length = smoothed * (MAX_RADIUS - MIN_RADIUS);
-        
-        // Start and end points
-        int16_t x_start = CENTER_X + (int16_t)(MIN_RADIUS * cosf(angle));
-        int16_t y_start = CENTER_Y + (int16_t)(MIN_RADIUS * sinf(angle));
-        int16_t x_end = CENTER_X + (int16_t)((MIN_RADIUS + bar_length) * cosf(angle));
-        int16_t y_end = CENTER_Y + (int16_t)((MIN_RADIUS + bar_length) * sinf(angle));
-        
-        // Get color based on amplitude
-        uint16_t color = amplitude_to_color(smoothed);
-        
-        // Draw the bar (thickness based on number of bands)
-        uint8_t thickness = (num_bands <= 8) ? 5 : (num_bands <= 16) ? 3 : 2;
-        draw_thick_line(x_start, y_start, x_end, y_end, color, thickness);
+
+    if (_shock) gfx_circle(CX, CY, (int)_shock_r, (uint8_t)(1 + (HUES - 1) * BRIGHT + BRIGHT - 1));
+
+    // Core: concentric glow, brighter with bass
+    int rc = (int)r0 - 4;
+    for (int r = rc; r > 0; r -= 3) {
+        int k = (int)((1.0f - (float)r / rc) * 4.0f + _bass * 4.0f);
+        if (k > CORE_N - 1) k = CORE_N - 1;
+        gfx_fill_circle(CX, CY, r, (uint8_t)(CORE_FIRST + k));
     }
+    gfx_circle(CX, CY, (int)r0 - 2, CORE_FIRST + CORE_N - 1);
 }
 
-void radial_clear(void) {
-    ili9341_fill_screen(ILI9341_BLACK);
-    radial_init();
-}
-
+const theme_t theme_radial = {
+    .name = "NOVA",
+    .enter = enter,
+    .update = update,
+    .draw = draw,
+};
