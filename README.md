@@ -1,97 +1,69 @@
 # Raspberry Pi Pico Spectrum Analyzer
 ![Fully Wired Spectrum Analyzer](./asset_images/fully_wired.jpeg)
 
-A real-time audio spectrum analyzer for the Raspberry Pi Pico W, featuring FFT-based frequency analysis with multiple visualization themes on an SPI TFT display.
+A real-time audio spectrum analyzer for the Raspberry Pi Pico W: dual-core, DMA-driven, fixed-point dual-resolution FFT, and six visualizations at 50 fps on a 2.8" ILI9341 TFT.
 
 ## Project Overview
 
-This project creates a minimalist yet powerful spectrum analyzer that processes audio input in real-time, breaks it down into configurable frequency bands using Fast Fourier Transform (FFT), and displays the results with beautiful visualizations on a 2.8" ILI9341 TFT display.
+A real-time audio spectrum analyzer that pushes the RP2040 hard: both cores, DMA
+everywhere, a fixed-point dual-resolution FFT, and a double-buffered 8-bit
+indexed renderer streaming full frames to the panel at the SPI bus limit.
 
-### Implemented Features
+### Measured on hardware
 
-- **Real-Time Audio Input**
-  - ✅ MAX4466 electret microphone with adjustable gain
-  - ✅ 22,050 Hz sample rate via timer-triggered ADC + DMA
-  - ✅ Software-adjustable gain for optimal sensitivity
-  - 🔄 3.5mm audio jack input (future enhancement)
-  
-- **Real-Time FFT Processing**
-  - ✅ Fast Fourier Transform with 64-point window
-  - ✅ 16 logarithmic frequency bands (20Hz - 11kHz)
-  - ✅ Sub-millisecond latency for responsive visuals
-  - ✅ Tested with full audible range (20Hz - 20kHz)
+| | Before | Now |
+|---|---|---|
+| Frame rate | 10.7 fps | **50.6 fps**, every theme (bound by the SPI transfer) |
+| Sample-to-glass latency | not measured | **~28 ms** (data capture to last pixel sent) |
+| Audio | 22 kHz timer IRQ per sample, ring overflowing | **48 kHz** free-running ADC + DMA, zero CPU per sample, no drops |
+| FFT | 64-pt float (344 Hz bins) | 1024-pt + 256-pt bass FFT, **11.7 Hz bass bins**, 187.5 spectra/s |
+| Frequency accuracy | - | **< 0.2 %** (41 Hz - 12 kHz), level **+/-0.3 dB** (host-tested) |
+| Display | 16 bars, flicker (clear-then-draw) | 320 log-spaced columns, 6 themes, flicker-free full-frame compositing |
 
-- **Visualization Themes**
-  - ✅ **Classic Bars** - Vertical bars with color gradients and peak hold (working!)
-  - ✅ **Waterfall** - Scrolling spectrogram (fully integrated!)
-  - ✅ **Radial** - Circular spectrum visualization (fully coded!)
-  - ✅ **Mirror** - Symmetric mirrored bars (fully coded!)
-  - 🔄 VU meter style (future enhancement)
-  
-- **Touch Control Interface**
-  - ✅ XPT2046 resistive touch controller driver (fully coded!)
-  - ✅ Gesture detection (swipe, tap, long press) (fully coded!)
-  - ✅ Theme manager with smooth switching (fully integrated!)
-  - ✅ On-screen theme name overlay (fully coded!)
-  - 🔄 Settings menu (future enhancement)
+`sys 250 MHz | SPI 62.5 MHz | DSP 2.2 ms per 5.33 ms hop | draw 2-6 ms hidden behind a 19.8 ms transfer`
 
-- **Efficient Audio Sampling**
-  - ✅ Timer-triggered ADC conversions for precise timing
-  - ✅ DMA-based sample capture (minimal CPU overhead)
-  - ✅ Circular buffer for continuous streaming
-  - ✅ Consistent sample intervals for accurate FFT
+### Features
 
-- **Display Performance**
-  - ✅ ILI9341 2.8" TFT (320x240) at 32MHz SPI
-  - ✅ Smooth 30 FPS rendering
-  - ✅ Efficient DMA-based screen updates
+- **Audio:** MAX4466 electret mic on ADC0, 48 kHz with crystal-accurate sampling
+- **Analysis:** 1024-pt block-floating-point real FFT for mids and highs, plus a 4th-order CIC
+  decimator (48 k -> 3 kHz) feeding a 256-pt bass FFT; crossfaded at 380-600 Hz onto 320
+  log-spaced columns (30 Hz - 16 kHz); parabolic-interpolated dominant frequency readout
+- **Display dynamics:** per-column noise-floor tracking with a 1:3 downward expander (silence
+  reads dark, fixed electrical spurs vanish), AGC with a noise-tracking bottom, instant-attack
+  / 30 dB/s release ballistics, +3 dB/oct tilt so music reads flat
+- **Themes:** Spectrum, Analyzer, Spectrogram, Terrain, Nova, Scope (see below)
+- **Controls:** touch (swipe, tap, long press) and a serial command console
+- **Resilience:** HardFault capture (PC/LR reported after reboot), watchdog, and a
+  crash-loop escape into BOOTSEL so the board can always be re-flashed over USB
 
 ## Architecture
 
-### Single-Core Efficient Design
-
-The analyzer uses a **simple, efficient single-core architecture** that achieves 30 FPS with room to spare:
-
 ```
-┌───────────────────────────────────────────────────────────┐
-│               Raspberry Pi Pico W (RP2040)                │
-│                                                           │
-│  Main Loop (Core 0):                                      │
-│  ┌─────────────────────────────────────────────────────┐  │
-│  │ 1. Check for touch input → Process gestures         │  │
-│  │ 2. Read audio samples → ADC (timer + DMA)           │  │
-│  │ 3. Perform FFT → Extract frequency bands            │  │
-│  │ 4. Render visualization → Current theme             │  │
-│  │ 5. Frame rate limiting → 30 FPS target              │  │
-│  └─────────────────────────────────────────────────────┘  │
-│                                                           │
-│  Background Tasks:                                        │
-│  • Timer-triggered ADC conversions (22,050 Hz)            │
-│  • DMA transfers samples to circular buffer               │
-│  • SPI display updates via DMA                            │
-└───────────────────────────────────────────────────────────┘
+ Core 0 (audio)                                    Core 1 (render)
+ ──────────────                                    ───────────────
+ ADC 48 kHz ──DMA──> 2048-sample ring              drain hop queue, touch, serial
+   (control DMA channel re-arms forever)           ── just-in-time ──
+ every 256 samples (5.33 ms):                      latest mailbox frame
+   CIC /16 -> 3 kHz bass stream                    theme update + draw into BACK buffer
+   1024-pt FFT (48 kHz) + 256-pt FFT (3 kHz)       HUD / popup (save-under)
+   -> 320 log columns (dBFS, Q8)                   wait for FRONT stream to finish
+   noise-floor expander, AGC, ballistics           swap, stream new FRONT:
+   ├── mailbox (seqlock)  ─────────────────────>     DMA IRQ palette-expands 8-row
+   └── hop queue (SPSC, every hop) ────────────>     strips into ping-pong RGB565
+                                                     buffers -> SPI0 @ 62.5 MHz
 ```
 
-**Why Single-Core?**
-- ✅ Simpler to implement and debug
-- ✅ No synchronization/locking complexity
-- ✅ Performance is excellent (30 FPS sustained)
-- ✅ Plenty of CPU headroom for future features
-- 💡 Dual-core could be explored for advanced features (e.g., WiFi streaming)
+Key decisions:
 
-### Design Decisions (As-Built vs. Originally Planned)
-
-This project evolved from initial ambitious plans to a **pragmatic, working implementation**:
-
-| Feature | Originally Planned | Actually Built | Rationale |
-|---------|-------------------|----------------|-----------|
-| **Core Usage** | Dual-core (audio on Core 0, display on Core 1) | Single-core main loop | ✅ Simpler architecture, easier debugging, performance is excellent |
-| **ADC Sampling** | PIO-based for precise timing | Timer + DMA | ✅ Standard SDK approach works perfectly, PIO adds complexity for minimal gain |
-| **Audio Input** | Mic + 3.5mm jack with multiplexer | Microphone only | ✅ Focus on core functionality first, jack is easy future addition |
-| **Bluetooth Audio** | Considered for wireless input | Not implemented | ❌ Latency issues for real-time visualization, wired is better |
-| **Display DMA** | Full DMA-driven rendering | Efficient SPI transfers | ✅ Standard SPI at 32MHz achieves 30 FPS target |
-
-**Philosophy:** Build the simplest thing that works, optimize only if needed. Current implementation achieves all performance targets with CPU to spare!
+| Decision | Why |
+|---|---|
+| 8-bit indexed framebuffer, double-buffered (2 x 75 KB) | Two RGB565 frames will not fit in 264 KB; indexed frames do, and a palette gives free "dim" twins (`idx \| 0x80`) for translucent overlays, reflections and trails |
+| Palette expansion in the DMA IRQ | ~25 us of CPU per 0.65 ms strip; the SPI never idles |
+| SPI mode 3, not mode 0 | The PL022 inserts an idle gap between words when CPHA=0; mode 3 streams back-to-back (21.7 -> 19.8 ms per frame) |
+| `PICO_CLOCK_ADJUST_PERI_CLOCK_WITH_SYS_CLOCK=1` | Otherwise SDK 2.x moves clk_peri to 48 MHz on overclock and SPI caps at 24 MHz |
+| Fixed-point FFT with block floating point | No FPU on the M0+; conditional per-stage scaling keeps quiet signals precise (-76 dB error floor vs a double DFT) |
+| Dual-resolution FFT | 46.9 Hz bins cannot resolve bass; a CIC-decimated 256-pt FFT gives 11.7 Hz bins for about 0.15 ms |
+| Just-in-time draw start | Frame rate is set by the transfer, while latency stays about draw + one transfer |
 
 ### Hardware Components
 
@@ -108,9 +80,9 @@ This project evolved from initial ambitious plans to a **pragmatic, working impl
 ```
 Pico W GPIO Assignments:
 ├── Display (SPI0) - ✅ Working
-│   ├── GP16 - MISO (not used)
+│   ├── GP16 - MISO (optional: SPI self-test)
 │   ├── GP17 - CS (Chip Select)
-│   ├── GP18 - SCK (Clock @ 32MHz)
+│   ├── GP18 - SCK (Clock @ 62.5MHz)
 │   ├── GP19 - MOSI (Data)
 │   ├── GP20 - DC (Data/Command)
 │   ├── GP21 - RST (Reset)
@@ -142,7 +114,7 @@ Pico W GPIO Assignments:
 | SDI/MOSI | Data Out | GP19 | Pin 25 | SPI0 TX |
 | SCK | Clock | GP18 | Pin 24 | SPI0 SCK |
 | LED/BL | Backlight | 3.3V or GP22 | Pin 36 or 29 | Can use PWM on GP22 |
-| SDO/MISO | Data In | GP16 | Pin 21 | Optional, not used |
+| SDO/MISO | Data In | GP16 | Pin 21 | Optional: enables the 62.5 MHz read-back self-test |
 
 **Important Notes:**
 - Most ILI9341 modules operate at 3.3V logic levels
@@ -204,314 +176,89 @@ Pico W GPIO Assignments:
 
 ### Prerequisites
 
-- **Docker Desktop for Mac** (installed and running)
-- **USB cable** for Pico programming
-- **Git** for version control
+- Docker Desktop (the toolchain and Pico SDK live in the image)
+- `picotool` for flashing: `brew install picotool`
+- Python 3 with `pyserial` for serial monitoring
 
-### Quick Start with Docker
-
-This project uses a containerized development environment to avoid polluting your system with toolchains and dependencies.
-
-1. **Clone and navigate to the project:**
-   ```bash
-   cd /Users/dwestbury/Documents/Source\ Code/RPI_Pico/pico_spec_analyzer
-   ```
-
-2. **Build the Docker development environment:**
-   ```bash
-   docker-compose build
-   ```
-
-3. **Compile the project:**
-   ```bash
-   docker-compose run --rm build
-   ```
-
-4. **Flash to Pico:**
-   - Hold BOOTSEL button on Pico W
-   - Connect USB cable to Mac
-   - Release BOOTSEL (appears as USB drive)
-   - Copy `build/pico_spec_analyzer.uf2` to the Pico drive
-
-### Development Workflow
+### Build, flash, monitor
 
 ```bash
-# Start interactive development shell
-docker-compose run --rm dev
-
-# Inside container:
-mkdir -p build && cd build
-cmake ..
-make -j4
-
-# Or use the convenience script (from host):
-./scripts/build.sh
-
-# Clean build:
-./scripts/build.sh clean
+docker compose build dev                 # once: toolchain image
+./scripts/deploy.sh --monitor 10         # build in Docker, flash, tail serial for 10 s
+./scripts/deploy.sh --no-build           # flash the existing build
+./tests/run_host_tests.sh                # DSP unit tests on the host (no SDK needed)
 ```
 
-### Manual Build (Native, if preferred)
+`deploy.sh` flashes with `picotool load -f -x`, which forces a running board into BOOTSEL
+over USB, so no button press is needed. Copying the UF2 to the `RPI-RP2` drive is avoided
+on purpose: on recent macOS the FSKit FAT driver can hang mid-copy.
 
-If you prefer to install tools natively on macOS:
-
-```bash
-# Install ARM toolchain and CMake
-brew install cmake
-brew tap ArmMbed/homebrew-formulae
-brew install arm-none-eabi-gcc
-
-# Clone Pico SDK
-git clone https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
-cd ~/pico-sdk
-git submodule update --init
-export PICO_SDK_PATH=~/pico-sdk
-
-# Build
-mkdir build && cd build
-cmake ..
-make -j4
-```
+If the board is ever unresponsive, hold BOOTSEL while plugging it in, then run
+`./scripts/deploy.sh --no-build`.
 
 ## Project Structure
 
 ```
-pico_spec_analyzer/
-├── src/
-│   ├── spectrum_analyzer.c    # ✅ Main application (single-core)
-│   ├── audio/
-│   │   ├── adc_sampler.c      # ✅ Timer + DMA ADC sampling
-│   │   └── fft_processor.c    # ✅ FFT computation & band extraction
-│   ├── display/
-│   │   ├── ili9341.c          # ✅ Display driver (SPI @ 32MHz)
-│   │   ├── theme_manager.c    # ✅ Theme management & switching
-│   │   └── themes/
-│   │       ├── bars.c         # ✅ Bar graph visualization
-│   │       ├── waterfall.c    # ✅ Waterfall spectrogram
-│   │       ├── radial.c       # ✅ Circular spectrum
-│   │       └── mirror.c       # ✅ Mirror mode visualization
-│   ├── touch/
-│   │   └── xpt2046.c          # ✅ Touch controller driver & gestures
-│   ├── utils/
-│   │   └── mock_audio.c       # 🧪 Mock audio for testing
-│   ├── main_simple_test.c     # 🧪 Test: LED blink & serial (Stage 1)
-│   ├── display_test.c         # 🧪 Test: Display validation (Stage 2)
-│   └── spectrum_viz_test.c    # 🧪 Test: Themes with mock audio (Stage 3)
-│
-├── include/
-│   ├── config.h               # ✅ Pin definitions & constants
-│   ├── audio/
-│   │   ├── adc_sampler.h      # ✅ ADC sampler interface
-│   │   └── fft_processor.h    # ✅ FFT processor interface
-│   ├── display/
-│   │   ├── ili9341.h          # ✅ Display driver interface
-│   │   ├── theme_manager.h    # ✅ Theme manager interface
-│   │   └── themes/
-│   │       ├── bars.h         # ✅ Bar theme interface
-│   │       ├── waterfall.h    # ✅ Waterfall theme interface
-│   │       ├── radial.h       # ✅ Radial theme interface
-│   │       └── mirror.h       # ✅ Mirror theme interface
-│   ├── touch/
-│   │   └── xpt2046.h          # ✅ Touch controller interface
-│   └── utils/
-│       └── mock_audio.h       # ✅ Mock audio interface
-│
-├── pio/
-│   └── adc_sampler.pio        # 🔄 PIO ADC (optional future optimization)
-│
-├── scripts/
-│   ├── build.sh               # ✅ Build helper script
-│   ├── docker-build.sh        # ✅ Docker build wrapper
-│   └── read_serial.py         # ✅ Serial monitor script
-│
-├── asset_images/              # ✅ Project photos and diagrams
-├── datasheets-and-manuals/    # ✅ Hardware documentation
-├── CMakeLists.txt             # ✅ Root CMake configuration
-├── Dockerfile                 # ✅ Development container
-├── docker-compose.yml         # ✅ Docker compose configuration
-├── .dockerignore              # ✅ Docker build exclusions
-├── .gitignore                 # ✅ Git exclusions
-└── README.md                  # ✅ This file
-
-Legend: ✅ Production Code | 🧪 Test/Development Tools | 🔄 Planned
+include/                     src/
+  config.h      pins, clocks   main.c                boot, overclock, core split
+  platform.h    RAMFUNC shim   core/shared.c         seqlock mailbox, hop queue, controls
+  audio/                       core/crash.c          HardFault capture, watchdog, BOOTSEL escape
+    spectrum.h  core contract  audio/audio_task.c    ADC DMA ring, CIC, per-hop analysis (core 0)
+    dsp.h                      audio/dsp.c           dual-FFT columns, expander, AGC, ballistics
+    fft_q.h                    audio/fft_q.c         block-floating-point real FFT
+  display/                     display/ili9341.c     panel init, IRQ-driven strip streaming
+    gfx.h theme.h ...          display/gfx.c         double-buffered indexed fb, save-under
+                               display/renderer.c    frame loop, HUD, input, stats (core 1)
+                               display/themes/*.c    the six themes
+tests/test_dsp.c               host tests vs a double-precision DFT
+scripts/deploy.sh              build + flash + monitor
 ```
 
 ## Visualization Themes
 
-### ✅ 1. Classic Bars (Fully Working!)
-Vertical bars representing each frequency band with:
-- Color gradients (green → yellow → red based on amplitude)
-- Peak hold indicators that slowly decay
-- Smooth 30 FPS animation
-- **Best for:** General music visualization, all genres
-- **Status:** ✅ Tested on hardware with live audio
+| # | Theme | What it shows |
+|---|---|---|
+| 1 | **Spectrum** | 64 bars, sunset gradient by height, gravity-driven peak caps, dithered floor reflection, dB grid |
+| 2 | **Analyzer** | 320-point curve with glow fill, peak-hold trace, dBFS/Hz graticule, live dominant-frequency readout |
+| 3 | **Spectrogram** | Scrolling "inferno" waterfall, 93.75 rows/s (2.4 s of history), kept in the framebuffer itself |
+| 4 | **Terrain** | The last 40 spectra as synthwave ridge lines receding to a horizon, with occlusion and sub-line smooth scrolling; bass-pulsed striped sun |
+| 5 | **Nova** | 96 mirrored spokes on a rotating ring, hue by frequency, palette-fade motion trails, bass-pulsed core, beat shockwaves |
+| 6 | **Scope** | Rising-edge-triggered phosphor oscilloscope with persistence and auto-ranging |
 
-### ✅ 2. Waterfall Spectrogram (Fully Integrated!)
-Scrolling time-frequency display showing spectrum history:
-- Heat map colors (black → blue → cyan → green → yellow → red)
-- 200 rows of scrolling history
-- Shows how frequencies change over time
-- **Best for:** Analyzing frequency patterns, DJ monitoring
-- **Status:** ✅ Fully coded and integrated, ready for hardware test
+## Controls
 
-### ✅ 3. Radial Spectrum (Fully Coded!)
-Circular visualization with bands radiating from center:
-- Bars arranged in a circle like a blooming flower
-- Color gradients and smooth animations
-- Variable thickness based on band count
-- Visually striking for displays/parties
-- **Best for:** Music with strong beats, visual impact
-- **Status:** ✅ Fully implemented, ready for hardware test
+| Touch | Serial (115200, any key) | Action |
+|---|---|---|
+| Swipe right / left | `n` / `p`, `1`-`6` | Next / previous / pick theme |
+| Tap | `h` | Toggle the performance HUD |
+| Long press | `t` | Cycle input: mic, 440 Hz, 1 kHz, sweep, chord (synthetic, injected into the ADC ring) |
+| | `a` | Toggle AGC |
+| | `s` | Status (clocks, last reset cause, crash PC if any) |
+| | `f` | Dump the framebuffer (base64 palette + pixels) for off-board screenshots |
 
-### ✅ 4. Mirror Mode (Fully Coded!)
-Symmetric mirrored bars for stereo-like effect:
-- Bars mirrored vertically from center line
-- Peak hold indicators on both sides
-- Creates beautiful symmetric patterns
-- **Best for:** Dance music, electronic, bass-heavy tracks
-- **Status:** ✅ Fully implemented, ready for hardware test
+Stats print every 2 s:
 
-### 🔄 5. VU Meter (Future Enhancement)
-Analog-style VU meter with smooth needle animation:
-- Classic retro aesthetic
-- Smooth ballistic movement
-- **Best for:** Vintage look, monitoring overall levels
-- **Status:** 🔄 Planned for future release
-
-## Configuration
-
-### Compile-Time Options (`include/config.h`)
-
-```c
-// Audio Configuration (Tested & Working)
-#define SAMPLE_RATE_HZ      22050    // Sampling rate
-#define FFT_SIZE            64       // FFT window size
-#define BAND_COUNT          16       // Frequency bands
-#define FFT_DISPLAY_GAIN    5.0f     // Software gain (adjust for sensitivity)
-
-// Display Configuration
-#define DISPLAY_WIDTH       320
-#define DISPLAY_HEIGHT      240
-#define TARGET_FPS          30
-#define SPI_SPEED_HZ        (32 * 1000 * 1000)  // 32 MHz
-
-// Touch Configuration
-#define TOUCH_SPI_SPEED     (2 * 1000 * 1000)   // 2 MHz
-#define SWIPE_THRESHOLD_PX  50       // Minimum swipe distance
-#define SWIPE_TIMEOUT_MS    500      // Maximum swipe duration
-#define TOUCH_HOLD_TIME_MS  800      // Long press threshold
+```
+fps 50.6 | draw 1.81/1.89 ms | stream 19.76 ms | lat 27.2/29.8 ms | dsp 2215/2243 us | skip 0 | qdrop 0 | peak 1000.8 Hz -11.9 dBFS | top -14.9
 ```
 
-### Touch Gestures (Fully Implemented!)
+## Tuning
 
-- ✅ **Swipe Right** - Next theme (Bars → Waterfall → Radial → Mirror → Bars...)
-- ✅ **Swipe Left** - Previous theme
-- ✅ **Tap** - Show theme name overlay (displays for 2 seconds)
-- ✅ **Long Press** - Reserved for future settings menu
+- **Clocks:** `SYS_CLOCK_KHZ`, `SYS_VREG_VOLTAGE`, `DISPLAY_SPI_STREAM_HZ` in `include/config.h`
+- **Analysis:** FFT sizes, hop size and range in `include/audio/spectrum.h`
+- **Dynamics:** tilt, noise-floor tracking, expander, AGC and release constants at the top of
+  the AGC section of `src/audio/dsp.c`
+- **Mic gain:** the MAX4466 trimpot. Its self-noise at max gain dominates the ADC's.
 
-### Future Runtime Settings (via Touch UI)
+## Known limitations
 
-- 🔄 Settings menu (long press to access)
-- 🔄 Gain adjustment slider
-- 🔄 Color scheme selection
-- 🔄 Band count selection (4/8/16/32)
-
-## Testing & Staged Development
-
-The project includes test programs for staged development and validation:
-
-### Stage 1: Hardware Validation
-Test basic Pico functionality (LED blink, serial output):
-```bash
-# Edit CMakeLists.txt - uncomment main_simple_test.c, comment spectrum_analyzer.c
-docker-compose run --rm build
-# Flash and verify LED blinks
-```
-
-### Stage 2: Display Validation  
-Test ILI9341 display driver and SPI communication:
-```bash
-# Edit CMakeLists.txt - uncomment display_test.c, comment spectrum_analyzer.c
-docker-compose run --rm build
-# Flash and verify display shows color test patterns
-```
-
-### Stage 3: Visualization Testing
-Test all themes with simulated audio (no microphone needed):
-```bash
-# Edit CMakeLists.txt - uncomment spectrum_viz_test.c and mock_audio.c, comment spectrum_analyzer.c
-docker-compose run --rm build
-# Flash and verify animated spectrum bars with simulated audio transients
-```
-
-### Stage 4: Full System
-Run complete spectrum analyzer with real audio:
-```bash
-# Edit CMakeLists.txt - use spectrum_analyzer.c (default)
-docker-compose run --rm build
-# Flash and test with live microphone input
-```
-
-### Monitor Serial Output
-```bash
-# Option 1: Python script (recommended)
-python3 scripts/read_serial.py
-
-# Option 2: screen
-screen /dev/tty.usbmodem* 115200
-```
-
-## Performance (Measured on Hardware)
-
-- **Audio Latency**: ~1ms ✅ (input to FFT processing)
-- **Display Refresh**: 30 FPS ✅ (smooth, consistent)
-- **Frame Time**: ~25ms average ✅
-- **FFT Processing**: Real-time ✅ (22,050 Hz sampling)
-- **SPI Speed**: 32 MHz ✅
-- **Frequency Range**: 20Hz - 11kHz ✅ (tested with full sweep)
-- **CPU Utilization**: Well within limits ✅ (room for more features)
-
-## Roadmap
-
-### ✅ Recently Completed
-- [x] **Touch Control System** - XPT2046 driver with gesture detection
-- [x] **Theme Manager** - Smooth switching between visualizations
-- [x] **New Themes** - Waterfall, Radial, and Mirror mode visualizations
-- [x] **On-Screen UI** - Theme name overlay with auto-hide
-- [x] **Full Integration** - Touch-controlled theme switching in main app
-- [x] **Efficient ADC** - Timer-triggered sampling with DMA (22,050 Hz)
-- [x] **Real-Time FFT** - 16 logarithmic frequency bands
-- [x] **30 FPS Display** - Smooth animations with excellent performance
-
-### Next Up (Hardware Testing)
-- [ ] Wire up touch controller (XPT2046)
-- [ ] Test all four themes with real audio
-- [ ] Test touch gestures (swipe to change themes)
-- [ ] Calibrate touch coordinates if needed
-- [ ] Verify all themes run at 30 FPS
-
-### Future Enhancements
-
-**Performance Optimizations:**
-- [ ] PIO-based ADC sampling (reduce CPU load further)
-- [ ] Dual-core architecture (Core 0: audio/FFT, Core 1: display/UI)
-- [ ] More DMA usage for SPI transfers
-
-**Features:**
-- [ ] 3.5mm audio jack input with analog multiplexer
-- [ ] Runtime band count adjustment (4/8/16/32)
-- [ ] Multiple color schemes/palettes
-- [ ] Frequency band labels on display
-- [ ] VU meter visualization theme
-- [ ] Settings menu via long press
-
-**Advanced Features:**
-- [ ] microSD card for recording FFT data
-- [ ] WiFi web interface for remote configuration
-- [ ] WiFi audio streaming to browser
-- [ ] USB audio class device (use Pico as USB sound card)
-- [ ] WS2812 LED ring for ambient visualization
-- [ ] Battery power support with LiPo
+- MISO (GP16) is not wired on this build, so the 62.5 MHz write/read-back self-test reports
+  `n/a`; signal integrity is judged by eye.
+- Latency is measured from sample capture to the last pixel leaving SPI. The panel's own
+  ~79 Hz scan adds up to one more refresh (the TE pin is not wired).
+- Above the 480 Hz crossover the display is normalised to spectral density, so pure tones
+  read ~6 dB lower there than below (the numeric peak readout stays calibrated for tones).
+- The historical notes in `docs/` describe the earlier single-core design.
 
 ## References
 
@@ -520,7 +267,5 @@ screen /dev/tty.usbmodem* 115200
 - [MAX4466 Microphone Datasheet](./datasheets-and-manuals/Datasheet_MAX4466.pdf)
 - [XPT2046 Touch Controller Datasheet](./datasheets-and-manuals/Datasheet_XPT2046.pdf)
 - [Pico C/C++ SDK Documentation](https://www.raspberrypi.com/documentation/pico-sdk/)
-- [ARM CMSIS-DSP Library](https://github.com/ARM-software/CMSIS-DSP)
-- [PIO Assembly Guide](https://datasheets.raspberrypi.com/pico/raspberry-pi-pico-c-sdk.pdf)
 
 ---
